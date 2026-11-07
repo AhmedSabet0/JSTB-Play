@@ -1,0 +1,164 @@
+# Builds JSTB, validates on Android emulators, and deploys to Google Play.
+name: Android Play Store
+
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", "!android/**/*.md", ".github/workflows/android.yml"]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Version to release, like 3.4.0 (empty: auto-increment)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      release: ${{ steps.key.outputs.release }}
+      name: ${{ steps.v.outputs.name }}
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Android build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq aapt2 dalvik-exchange zipalign apksigner
+          ls "$ANDROID_HOME/platforms/android-34/android.jar" || yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34"
+          curl -fsSL -o "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.18.1/bundletool-all-1.18.1.jar
+
+      - name: Version
+        id: v
+        env:
+          REL: ${{ inputs.release }}
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          BASE="$(grep -o 'versionName="[^"]*"' AndroidManifest.xml | cut -d'"' -f2)"
+          AUTO=""
+          if [ -n "$REL" ]; then NAME="${REL#v}"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then NAME="${GITHUB_REF_NAME#v}"
+          elif [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] \
+            || { [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ] && ! grep -qiF '[skip release]' <<<"$MSG"; }; then
+            NAME="$BASE.${{ github.run_number }}"
+            AUTO=1
+          fi
+          if [ -n "${NAME:-}" ]; then
+            [[ "$NAME" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]] || { echo "::error::A version looks like 3.4.0, not '$NAME'."; exit 1; }
+            echo "tag=v$NAME" >> "$GITHUB_OUTPUT"
+          else
+            NAME="$BASE-dev.${{ github.run_number }}"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "auto=$AUTO" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$(( 100 + ${{ github.run_number }} ))" >> "$GITHUB_OUTPUT"
+
+      - name: Signing key
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          TAG: ${{ steps.v.outputs.tag }}
+          AUTO: ${{ steps.v.outputs.auto }}
+        run: |
+          mkdir -p keystore
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > keystore/autoapply.jks
+            echo "real=yes" >> "$GITHUB_OUTPUT"
+            echo "release=$TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No KEYSTORE_BASE64 secret: using test signing key."
+            echo "real=no" >> "$GITHUB_OUTPUT"
+            echo "release=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Google Play AAB Bundle
+        env:
+          KS_PASS: ${{ secrets.KS_PASS || 'autoapply' }}
+          NEW_KEY: ${{ steps.key.outputs.real == 'no' && '1' || '' }}
+          SERVER_URL: ${{ vars.SERVER_URL || 'https://145-241-153-177.sslip.io' }}
+          VERSION_NAME: ${{ steps.v.outputs.name }}
+          VERSION_CODE: ${{ steps.v.outputs.code }}
+        run: |
+          export ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar" BUNDLETOOL="$RUNNER_TEMP/bundletool.jar"
+          APK=1 ./build.sh
+          mkdir -p ../dist ../dist-play
+          cp out/JSTB.aab "../dist-play/JSTB-$VERSION_NAME.aab"
+          cp out/JSTB.apk "../dist/JSTB-play-universal.apk"
+          rm -f keystore/autoapply.jks
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JSTB-${{ steps.v.outputs.name }}-aab
+          path: dist-play/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: play-apk
+          path: dist/*
+
+  check:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: play-apk
+          path: apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Open app on Android 34
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash android/test/smoke.sh apk
+
+  upload-play:
+    needs: [build, check]
+    runs-on: ubuntu-24.04
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: JSTB-${{ needs.build.outputs.name }}-aab
+          path: dist-play
+
+      - name: Google Play upload
+        if: env.PLAY_JSON != ''
+        env:
+          PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.autoapply.bot
+          releaseFiles: dist-play/*.aab
+          track: ${{ vars.PLAY_TRACK || 'internal' }}
+          status: ${{ vars.PLAY_STATUS || 'completed' }}

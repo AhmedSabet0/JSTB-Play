@@ -1,0 +1,13 @@
+# Signing keys and secrets never go in the repo
+*.jks
+*.keystore
+*.pem
+*.key
+.env
+# Build output, caches, local data
+out/
+dist/
+__pycache__/
+*.db
+*.db-*
+builds/  
