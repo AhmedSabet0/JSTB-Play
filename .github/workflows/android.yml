@@ -96,8 +96,9 @@ jobs:
           VERSION_NAME: ${{ steps.v.outputs.name }}
           VERSION_CODE: ${{ steps.v.outputs.code }}
         run: |
+          chmod +x ./build.sh test/smoke.sh || true
           export ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar" BUNDLETOOL="$RUNNER_TEMP/bundletool.jar"
-          APK=1 ./build.sh
+          APK=1 bash ./build.sh
           mkdir -p ../dist ../dist-play
           cp out/JSTB.aab "../dist-play/JSTB-$VERSION_NAME.aab"
           cp out/JSTB.apk "../dist/JSTB-play-universal.apk"
