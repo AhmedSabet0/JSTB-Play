@@ -120,68 +120,118 @@ class WuzzufFetcher:
         self.use_requests = False
         try:
             import requests
-            self.requests_lib = requests
             self.session = requests.Session()
             self.use_requests = True
         except ImportError:
             self.use_requests = False
 
-    def search_jobs(self, query: str, start_index: int = 0, page_size: int = PAGE_SIZE) -> Tuple[List[Dict[str, Any]], int]:
+    def search_jobs(self, query: str, start_index: int = 0, page_size: int = PAGE_SIZE) -> Tuple[List[str], Dict[str, str], int]:
+        """
+        Step 1: POST https://wuzzuf.net/api/search/job
+        Returns: (job_ids, company_names_map, total_results_count)
+        """
         url = f"{BASE}/api/search/job"
-        payload = {"startIndex": start_index, "pageSize": page_size, "query": query, "searchFilters": {}}
+        payload = {
+            "startIndex": start_index,
+            "pageSize": page_size,
+            "longitude": "0",
+            "latitude": "0",
+            "query": query,
+            "searchFilters": {},
+            "sortBy": "date"
+        }
+        data = None
         try:
             if self.use_requests:
                 res = self.session.post(url, json=payload, headers=HEADERS, timeout=20)
                 if res.status_code != 200:
-                    logger.warning(f"Search failed HTTP {res.status_code} for query '{query}'")
-                    return [], 0
+                    logger.warning(f"Search failed HTTP {res.status_code} for '{query}': {res.text[:200]}")
+                    return [], {}, 0
                 data = res.json()
             else:
                 body = json.dumps(payload).encode("utf-8")
                 req = urllib.request.Request(url, data=body, headers=HEADERS, method="POST")
                 with urllib.request.urlopen(req, timeout=20) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-            return data.get("data") or [], (data.get("meta") or {}).get("totalResultsCount", 0)
+        except urllib.error.HTTPError as he:
+            err_msg = he.read().decode("utf-8", errors="ignore")
+            logger.error(f"Search HTTPError {he.code} for '{query}': {err_msg[:250]}")
+            return [], {}, 0
         except Exception as e:
             logger.error(f"Search exception for '{query}': {e}")
-            return [], 0
+            return [], {}, 0
+
+        if not isinstance(data, dict):
+            return [], {}, 0
+
+        raw_items = data.get("data") or []
+        job_ids = []
+        company_map = {}
+        for item in raw_items:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            jid = str(item["id"])
+            job_ids.append(jid)
+            attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+            for field in (attrs.get("computedFields") or []):
+                if isinstance(field, dict) and field.get("name") == "company_name":
+                    vals = field.get("value")
+                    cname = vals[0] if isinstance(vals, list) and vals else vals
+                    if isinstance(cname, str) and cname.strip():
+                        company_map[jid] = cname.strip()
+
+        meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+        total = meta.get("totalResultsCount") or meta.get("total_results_count") or 0
+        return job_ids, company_map, int(total)
 
     def fetch_job_details(self, job_ids: List[str], company_name_map: Dict[str, str]) -> List[Dict[str, Any]]:
+        """
+        Step 2: GET https://wuzzuf.net/api/job?filter[other][ids]=...
+        """
         if not job_ids:
             return []
         ids_param = ",".join(job_ids)
         url = f"{BASE}/api/job?filter[other][ids]={ids_param}"
+        data = None
         try:
             if self.use_requests:
                 res = self.session.get(url, headers=HEADERS, timeout=25)
                 if res.status_code != 200:
+                    logger.warning(f"Details failed HTTP {res.status_code}: {res.text[:200]}")
                     return []
-                raw_jobs = res.json().get("data") or []
+                data = res.json()
             else:
                 req = urllib.request.Request(url, headers=HEADERS, method="GET")
                 with urllib.request.urlopen(req, timeout=25) as resp:
-                    raw_jobs = json.loads(resp.read().decode("utf-8")).get("data") or []
-            return self._parse_jobs(raw_jobs, company_name_map)
+                    data = json.loads(resp.read().decode("utf-8"))
         except Exception as e:
-            logger.error(f"Details exception: {e}")
+            logger.error(f"Details exception for {len(job_ids)} jobs: {e}")
             return []
+
+        if not isinstance(data, dict):
+            return []
+
+        raw_jobs = data.get("data") or []
+        return self._parse_jobs(raw_jobs, company_name_map)
 
     def _parse_jobs(self, raw_jobs: List[Dict[str, Any]], company_name_map: Dict[str, str]) -> List[Dict[str, Any]]:
         out = []
         for item in raw_jobs:
-            job_uuid = item.get("id")
-            a = item.get("attributes") or {}
-            uri = a.get("uri") or ""
+            if not isinstance(item, dict):
+                continue
+            job_uuid = str(item.get("id"))
+            a = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+            uri = a.get("uri") or a.get("slug") or ""
             if not uri:
                 continue
-            url = f"{BASE}{uri}" if uri.startswith("/") else uri
+            url = f"{BASE}/jobs/p/{uri}" if not uri.startswith("http") and not uri.startswith("/") else (f"{BASE}{uri}" if uri.startswith("/") else uri)
             code = extract_code(url) or job_uuid
             title = clean_text(a.get("title"))
             if not title:
                 continue
 
-            company_name = company_name_map.get(job_uuid) or ""
-            loc = a.get("location") or {}
+            company_name = company_name_map.get(job_uuid) or a.get("companyName") or ""
+            loc = a.get("location") if isinstance(a.get("location"), dict) else {}
             city = ((loc.get("city") or {}).get("name") if isinstance(loc.get("city"), dict) else loc.get("city")) or ""
             country = ((loc.get("country") or {}).get("name") if isinstance(loc.get("country"), dict) else loc.get("country")) or "Egypt"
             location_str = f"{city}, {country}".strip(", ")
@@ -196,7 +246,7 @@ class WuzzufFetcher:
                 elif "hybrid" in wt_name:
                     workplace = "Hybrid"
 
-            exp = a.get("workExperienceYears") or {}
+            exp = a.get("workExperienceYears") if isinstance(a.get("workExperienceYears"), dict) else {}
             skills = [s.get("name") if isinstance(s, dict) else str(s) for s in (a.get("keywords") or a.get("skills") or [])]
 
             out.append({
@@ -342,17 +392,15 @@ def run_collector_cycle(fetcher: WuzzufFetcher, storage: LocalDatabaseStorage, t
         title_found, title_new = 0, 0
         for page in range(max_pages):
             start_index = page * PAGE_SIZE
-            items, total_count = fetcher.search_jobs(query, start_index=start_index, page_size=PAGE_SIZE)
-            if not items:
+            job_ids, company_map, total_count = fetcher.search_jobs(query, start_index=start_index, page_size=PAGE_SIZE)
+            if not job_ids:
                 break
-            company_map = {item["id"]: (item.get("computedFields") or {}).get("company_name", "") for item in items if "id" in item}
-            job_ids = list(company_map.keys())
             time.sleep(PAUSE)
             detailed = fetcher.fetch_job_details(job_ids, company_map)
             seen, new_cnt = storage.save_jobs(detailed)
             title_found += seen
             title_new += new_cnt
-            if len(items) < PAGE_SIZE or (start_index + PAGE_SIZE) >= total_count:
+            if len(job_ids) < PAGE_SIZE or (start_index + PAGE_SIZE) >= total_count:
                 break
             time.sleep(PAUSE)
         storage.update_query_stats(query, title_found, title_new)
