@@ -61,3 +61,53 @@
 * **منتقي حسابات جوجل الأصلي (Native Account Picker):** استخدام `AccountManager.newChooseAccountIntent()` لاختيار حساب جوجل المسجل على الهاتف مباشرة داخل التطبيق دون الخروج لمتصفح خارجي.
 * **إشعار منبثق أنيق للأسئلة المجهولة (Floating Question Pill):** شريط عائم راقٍ يظهر عند الحاجة لإدخال إجابة سؤال جديد، وبمجرد الضغط عليه ينتقل التركيز فوراً للحقل المطلوب.
 * **رفع صورة البروفايل تلقائياً:** دعم الاستجابة لطلبات رفع صور المرشحين الشخصية عبر `FilesProvider.uriForPhoto()`.
+
+---
+
+## 6. نظام سحب وظائف Wuzzuf وقاعدة البيانات المحلية على السيرفر (Linux VPS + Local SQLite)
+
+* **إلغاء الاعتماد على Supabase (No Cloud Dependency):**
+  * تم بناء نظام تخزين محلي بالكامل على السيرفر عبر SQLite مع تفعيل `WAL mode` لتحقيق أقصى سرعة قراءة وكتابة متزامنة.
+  * مسار قاعدة البيانات المحلي: `~/data/jobs.db`.
+  * الجداول المنشأة:
+    1. `wuzzuf_jobs`: لحفظ البيانات الكاملة لكل وظيفة مسحوبة وتحديث تاريخ الظهور `last_seen_at`.
+    2. `opportunities`: جدول الفرص الموحد المجهز لتطبيق الموبايل (`source = 'wuzzuf_job'`, `apply_type = 'easy_apply'`).
+    3. `job_queries`: جدول دورات البحث وتاريخ آخر سحب وعدد النتائج لكل مسمى.
+  * تصدير فوري لآخر 100 وظيفة إلى ملف `~/data/wuzzuf_latest.json`.
+
+* **مخاطبة الـ REST API الرسمي لـ Wuzzuf (Two-Step Fetching):**
+  * بدلاً من كشط الـ HTML المعرض للتوقف، يخاطب السكريبت واجهات Wuzzuf الرسمية بمعيار `application/vnd.api+json`.
+  * **الخطوة الأولى:** إرسال `POST https://wuzzuf.net/api/search/job` مع معلمات `startIndex`, `pageSize: 15`, `longitude: "0"`, `latitude: "0"`, `sortBy: "date"` للحصول على معرفات الوظائف وأسماء الشركات.
+  * **الخطوة الثانية:** إرسال `GET https://wuzzuf.net/api/job?filter[other][ids]=...` بنظام الدفعات (Batch) لجلب كافة تفاصيل الوظائف وشروطها.
+  * معدل طلبات هادئ وآمن (`PAUSE = 1.5s`) لحماية السيرفر من الحظر.
+
+* **العمل المستقل بدون أي مكتبات خارجية (Zero Dependencies on Linux):**
+  * يدعم المحرك مكتبات بايثون القياسية (`urllib.request` و `sqlite3`) تلقائياً، ويعمل على أي نظام Linux/Ubuntu نقي دون الحاجة لتثبيت `pip3` أو أي حزم إضافية.
+  * مزود بسيرفر HTTP مدمج وخفيف جداً لخدمة الوظائف عبر المنفذ 8080: `http://<SERVER_IP>:8080/api/jobs`.
+
+* **نظام الكلمات المفتاحية والمسميات (46 مسمى مطابق لـ LinkedIn Easy Apply):**
+  * يشمل مجالات: DevOps, Cloud, Backend, Frontend, Full Stack, Flutter, Android, iOS, Network, NOC, Telecom, Data Engineer, Machine Learning, QA, Product Manager.
+  * إمكانية قراءة مسميات مخصصة من ملف `titles.txt` على السيرفر أو تمريرها عبر خيار `--titles`.
+
+---
+
+## 7. أوامر تشغيل السيرفر والمحرك على الـ VPS
+
+```bash
+# 1. إيقاف أي عملية سابقة
+pkill -f wuzzuf_collector.py || true
+
+# 2. تنزيل أحدث نسخة من السكريبت
+curl -fsSL https://raw.githubusercontent.com/AhmedSabet0/JSTB/main/wuzzuf_collector.py -o ~/wuzzuf_collector.py
+
+# 3. تشغيل دورة سحب تجريبية للتأكد
+python3 ~/wuzzuf_collector.py --once
+
+# 4. تشغيل الساحب كـ Daemon في الخلفية يتكرر كل 3 ساعات ويفعل الـ API على البورت 8080
+nohup python3 ~/wuzzuf_collector.py --daemon --interval 3 --serve --port 8080 > ~/wuzzuf.log 2>&1 &
+
+# 5. متابعة السجل وفحص الـ API
+tail -f ~/wuzzuf.log
+curl http://127.0.0.1:8080/api/jobs
+```
+
