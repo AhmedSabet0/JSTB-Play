@@ -168,7 +168,7 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
 
     @Override
     public void forget(String question) {
-        store.deleteAnswer(Util.normKey(question));
+        store.removeAnswer(Util.normKey(question));
     }
 
     @Override

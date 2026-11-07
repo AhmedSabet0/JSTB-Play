@@ -39,7 +39,7 @@ public final class Updater {
         return out;
     }
 
-    public static Map<String, Object> check(String source, Map<String, Object> current) {
+    public static Map<String, Object> check(String source, Object current) {
         return Json.obj("available", false, "store", "play");
     }
 }

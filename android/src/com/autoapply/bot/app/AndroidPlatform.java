@@ -52,7 +52,6 @@ public final class AndroidPlatform implements Platform {
     public final Api api;
     volatile WeakReference<MainActivity> activity = new WeakReference<MainActivity>(null);
     volatile boolean activityResumed = false;
-    volatile WebViewPage page;
     private String scripts;
 
     private AndroidPlatform(Context app) {
