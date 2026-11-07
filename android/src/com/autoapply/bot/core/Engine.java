@@ -78,47 +78,6 @@ public final class Engine {
     public synchronized String start(final Bot.Options opts) {
         return "1-Tap Assisted Apply is active. Tap any job in Your Jobs to review and apply.";
     }
-        platform.onRunning(true);
-        thread = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    Engine.this.run(opts);
-                } catch (Throwable t) {  // last line of defence: show it on the dashboard
-                    log("Unexpected error: " + Util.shortError(t));
-                    Util.setStatus("state", "error", "message", Util.shortError(t), "error", Util.shortError(t), "job", null);
-                } finally {
-                    reporter.runEnded();  // the server must not think it still runs
-                    platform.onRunning(false);
-                }
-            }
-        }, "bot");
-        thread.start();
-        return "";
-    }
-
-    /** The bot waits between rounds (nothing is open on LinkedIn): a moment an update can be installed in. */
-    public volatile boolean betweenRounds;
-
-    /** Before an update is installed while the bot runs: remember to start it again (resume.json). */
-    public void saveResume() {
-        Bot.Options o = options();
-        if (o == null) {
-            return;
-        }
-        Util.writeText(new File(config.dir, "resume.json"), Json.stringify(Json.obj("options", o.toMap(), "at", Util.now())));
-    }
-
-    /** After the update: the options of the run to start again (once), or null. */
-    public Map<String, Object> takeResume() {
-        File f = new File(config.dir, "resume.json");
-        Map<String, Object> r = Json.map(Json.tryParse(f.isFile() ? Util.readText(f) : ""));
-        f.delete();
-        if (r.isEmpty() || Util.now() - Json.dbl(r, "at", 0) > 3600) {
-            return null;
-        }
-        return Json.map(r.get("options"));
-    }
 
     public void stop() {
         if (running()) {
