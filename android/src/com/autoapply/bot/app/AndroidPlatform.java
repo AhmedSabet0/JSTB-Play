@@ -218,6 +218,10 @@ public final class AndroidPlatform implements Platform {
             @Override
             public void run() {
                 MainActivity a = activity();
+                if ("google-auth".equals(how) && a != null && !a.isFinishing()) {
+                    a.showGoogleSignIn(url);
+                    return;
+                }
                 if (("inapp".equals(how) || "inapp-fill".equals(how)) && a != null && !a.isFinishing()) {
                     a.showBrowser(url, jobId, title, "inapp-fill".equals(how));
                     return;

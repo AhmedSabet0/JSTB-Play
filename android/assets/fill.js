@@ -70,14 +70,34 @@
   }
 
   function isResumeRadio(el) {
-    if (!el || (el.getAttribute('type') || '').toLowerCase() !== 'radio') return false;
+    if (!el) return false;
+    var type = (el.getAttribute('type') || el.tagName || '').toLowerCase();
+    if (type !== 'radio' && el.getAttribute('role') !== 'radio') {
+      var isCard = el.hasAttribute('data-test-document-card') || el.classList.contains('jobs-document-upload') || el.classList.contains('jobs-resume-picker__resume-list-item');
+      if (!isCard) return false;
+    }
     var name = (el.name || '').toLowerCase();
     var id = (el.id || '').toLowerCase();
     var val = (el.value || '').toLowerCase();
     var aria = (el.getAttribute('aria-label') || '').toLowerCase();
     if (name.indexOf('resume') >= 0 || id.indexOf('resume') >= 0 || val.indexOf('resume') >= 0 || aria.indexOf('resume') >= 0) return true;
-    if (val.indexOf('urn:li:media') >= 0 || val.indexOf('fsd_jobseekingdocument') >= 0 || name.indexOf('document-upload') >= 0 || id.indexOf('document-upload') >= 0) return true;
-    if (el.closest && el.closest('[data-test-document-card], .jobs-document-upload, [data-test-document-title], [class*="document-upload"], [class*="resume"], fieldset[class*="resume"], div[class*="resume"]')) return true;
+    if (name.indexOf('cv') >= 0 || id.indexOf('cv') >= 0 || val.indexOf('cv') >= 0 || aria.indexOf('cv') >= 0) return true;
+    if (val.indexOf('urn:li:media') >= 0 || val.indexOf('fsd_jobseekingdocument') >= 0 || name.indexOf('document') >= 0 || id.indexOf('document') >= 0) return true;
+    if (el.closest) {
+      if (el.closest('[data-test-document-card], [data-test-document-title], [class*="document-upload"], [class*="resume"], [id*="resume"], [id*="document"], fieldset[class*="resume"], div[class*="resume"]')) return true;
+      var sec = el.closest('section, fieldset, div[class*="form"], div[class*="step"], div[class*="group"], div[class*="container"]');
+      if (sec) {
+        var h = sec.querySelector('h1, h2, h3, h4, legend, label, p, span');
+        var ht = h ? clean(h.innerText || h.textContent || '').toLowerCase() : '';
+        if (ht.indexOf('resume') >= 0 || ht.indexOf('cv') >= 0) return true;
+      }
+    }
+    var p = el.parentElement;
+    for (var i = 0; i < 5 && p; i++, p = p.parentElement) {
+      if (p.querySelector && p.querySelector('button[aria-label*="Upload resume" i], .jobs-document-upload__upload-button, [data-test-document-card]')) {
+        return true;
+      }
+    }
     return false;
   }
 
@@ -118,7 +138,67 @@
     }
   }
 
+  function getTopResumeCards() {
+    var list = document.querySelectorAll('[data-test-document-card], .jobs-document-upload, .jobs-resume-picker__resume-list-item');
+    var cards = [];
+    for (var i = 0; i < list.length; i++) {
+      var item = list[i];
+      var isNested = false;
+      for (var j = 0; j < cards.length; j++) {
+        if (cards[j].contains(item)) { isNested = true; break; }
+      }
+      if (!isNested) cards.push(item);
+    }
+    return cards;
+  }
+
+  var lastResumeUploadAttempt = 0;
   function ensureResumeSelected() {
+    // 1. First priority: Upload the registered CV from the app!
+    var uploadBtn = document.querySelector('button[aria-label*="Upload resume" i], button.jobs-document-upload__upload-button, label[for*="upload"], input[type="file"][accept*="pdf"], input[type="file"]');
+    var now = Date.now();
+    
+    // Check if an upload is actively in progress
+    var isUploading = document.querySelector('.artdeco-loader, [role="progressbar"], .jobs-document-upload__loading, .jobs-document-upload--loading');
+    if (isUploading) {
+      return true;
+    }
+
+    // If uploadBtn exists and we haven't triggered it in the last 15 seconds:
+    if (uploadBtn && (now - lastResumeUploadAttempt > 15000)) {
+      lastResumeUploadAttempt = now;
+      try {
+        uploadBtn.click();
+        return true;
+      } catch (e) { /* fallback to selecting */ }
+    }
+
+    // 2. Fallback: Select ONLY the first (most recent) resume card/radio
+    var cards = getTopResumeCards();
+    if (cards.length > 0) {
+      var firstCard = cards[0];
+      var internalRadio = firstCard.querySelector('input[type="radio"]');
+      if (internalRadio) {
+        if (!internalRadio.checked) triggerRadioSelect(internalRadio);
+      } else {
+        var label = firstCard.querySelector('label') || firstCard;
+        label.click();
+        firstCard.setAttribute('aria-checked', 'true');
+        firstCard.classList.add('is-selected');
+      }
+
+      // Explicitly uncheck and un-mark any subsequent cards
+      for (var k = 1; k < cards.length; k++) {
+        var otherCard = cards[k];
+        var otherRadio = otherCard.querySelector('input[type="radio"]');
+        if (otherRadio) otherRadio.checked = false;
+        otherCard.removeAttribute('aria-checked');
+        otherCard.classList.remove('is-selected');
+        otherCard.style.outline = 'none';
+      }
+      return true;
+    }
+
     var radios = document.querySelectorAll('input[type="radio"]');
     var resumeRadios = [];
     for (var i = 0; i < radios.length; i++) {
@@ -126,37 +206,14 @@
         resumeRadios.push(radios[i]);
       }
     }
-
-    var anyChecked = resumeRadios.some(function (r) { return r.checked; });
-    var selectedCard = document.querySelector('[data-test-document-card][aria-checked="true"], .jobs-document-upload.is-selected, [data-test-document-card].is-selected');
-    if (anyChecked || selectedCard) {
-      return true;
-    }
-
     if (resumeRadios.length > 0) {
-      triggerRadioSelect(resumeRadios[0]);
-      return true;
-    }
-
-    var cards = document.querySelectorAll('[data-test-document-card], .jobs-document-upload, [data-test-document-title]');
-    if (cards.length > 0) {
-      var firstCard = (cards[0].closest && cards[0].closest('[data-test-document-card], .jobs-document-upload')) || cards[0];
-      var internalRadio = firstCard.querySelector('input[type="radio"]');
-      if (internalRadio) {
-        triggerRadioSelect(internalRadio);
-      } else {
-        var label = firstCard.querySelector('label') || firstCard;
-        label.click();
-        firstCard.setAttribute('aria-checked', 'true');
-        firstCard.classList.add('is-selected');
+      var anyChecked = resumeRadios.some(function (r) { return r.checked; });
+      if (!anyChecked) {
+        triggerRadioSelect(resumeRadios[0]);
       }
-      return true;
-    }
-
-    var hasResumeError = document.body && /a resume is required/i.test(document.body.innerText || '');
-    var uploadBtn = document.querySelector('button[aria-label*="Upload resume" i], .jobs-document-upload__upload-button, label[for*="upload"], input[type="file"][accept*="pdf"], input[type="file"]');
-    if ((hasResumeError || cards.length === 0) && uploadBtn) {
-      uploadBtn.click();
+      for (var rk = 1; rk < resumeRadios.length; rk++) {
+        resumeRadios[rk].checked = false;
+      }
       return true;
     }
 
@@ -186,9 +243,6 @@
       var type = (el.getAttribute('type') || el.tagName).toLowerCase();
       if (el.disabled || el.readOnly || SKIP.test(type) || !visible(el)) continue;
       if (type === 'radio' && isResumeRadio(el)) {
-        if (!el.checked && !document.querySelector('input[type="radio"][name="' + el.name + '"]:checked')) {
-          triggerRadioSelect(el);
-        }
         continue;
       }
       if (type === 'radio' || type === 'checkbox') {
@@ -473,6 +527,10 @@
   }
   function advance() {
     ensureResumeSelected();
+    var isUploading = document.querySelector('.artdeco-loader, [role="progressbar"], .jobs-document-upload__loading, .jobs-document-upload--loading');
+    if (isUploading) {
+      return 'uploading';
+    }
     var btns = findModalButtons();
     if (btns.next && !btns.next.disabled) {
       btns.next.click();

@@ -161,7 +161,9 @@
     if (firstState) {
       firstState = false;
       if (mustUpdate()) go('update');
-      else if (!state.setup.setup_done || !state.setup.has_cv) startSetup(!state.setup.has_cv ? 'cv' : undefined);
+      else if (!state.setup || !state.setup.account) startSetup('account');
+      else if (!state.setup.has_cv) startSetup('cv');
+      else if (!state.setup.setup_done) startSetup(wFirst(state.setup));
       else go('home');
       setTimeout(takePending, 50);
     } else if (mustUpdate() && view !== 'update') {
@@ -191,10 +193,57 @@
     }
     $('info-sub').textContent = state.facts ? `${plural(state.facts, 'answer')} you can reuse, by category` : 'What forms ask about you, by category';
   }
+
+  // ------------------------------------------------------------------ chic floating notification pill
+  let popupPillTimer = null;
+  function showPopupPill({ type = 'job', icon = '✨', title = '', sub = '', actText = 'View', onAct = null, duration = 8000 } = {}) {
+    const pill = $('popup-pill');
+    if (!pill) return;
+    if (popupPillTimer) { clearTimeout(popupPillTimer); popupPillTimer = null; }
+    pill.className = `popup-pill ${type}`;
+    $('popup-pill-icon').textContent = icon;
+    $('popup-pill-title').textContent = title;
+    $('popup-pill-sub').textContent = sub;
+    const actBtn = $('popup-pill-act');
+    actBtn.textContent = actText;
+    actBtn.onclick = (e) => {
+      e.stopPropagation();
+      pill.hidden = true;
+      if (onAct) onAct();
+    };
+    pill.onclick = () => {
+      pill.hidden = true;
+      if (onAct) onAct();
+    };
+    $('popup-pill-close').onclick = (e) => {
+      e.stopPropagation();
+      pill.hidden = true;
+    };
+    pill.hidden = false;
+    popupPillTimer = setTimeout(() => {
+      pill.hidden = true;
+    }, duration);
+  }
+
   let lastAccCheck = Date.now();
   let lastLists = 0;
+  let lastQuestionSeen = null;
   async function loop() {
     await refresh();
+    if (state) {
+      const q = state.question;
+      if (q && q.text && q.text !== lastQuestionSeen) {
+        lastQuestionSeen = q.text;
+        showPopupPill({
+          type: 'question',
+          icon: '❓',
+          title: 'Question for Application',
+          sub: q.text,
+          actText: 'Answer',
+          onAct: () => { go('questions'); }
+        });
+      }
+    }
     if (state && state.setup.setup_done && !document.hidden && Date.now() - lastLists > 20000
       && ['home', 'queue', 'tracker'].includes(view) && !sheetOpen()) {
       lastLists = Date.now();
@@ -221,21 +270,18 @@
 
   // ------------------------------------------------------------------ setup wizard
   // The Google Play build needs no LinkedIn sign-in (you apply in the LinkedIn app) and no background work.
-  const wSteps = () => (auto() ? ['welcome', 'account', 'cv', 'answers', 'jobs', 'linkedin', 'done']
-    : ['welcome', 'account', 'cv', 'answers', 'jobs', 'done']);
-  const wParts = () => (auto() ? ['account', 'cv', 'answers', 'jobs', 'linkedin'] : ['account', 'cv', 'answers', 'jobs']);
+  const wSteps = () => ['account', 'cv', 'answers', 'linkedin', 'done'];
+  const wParts = () => ['account', 'cv', 'answers', 'linkedin'];
   let wStep = null;
   let profileData = null;   // GET /api/profile
   let suggest = null;       // read from the CV
   let suggesting = false;
 
   function wFirst(setup) {
-    if (!setup.account && !setup.has_cv && !setup.profile_done) return 'welcome';
     if (!setup.account) return 'account';
     if (!setup.has_cv) return 'cv';
     if (!setup.profile_done) return 'answers';
-    if (!setup.has_search) return 'jobs';
-    if (auto() && !setup.signed_in) return 'linkedin';
+    if (!setup.signed_in) return 'linkedin';
     return 'done';
   }
   async function startSetup(step) {
@@ -305,8 +351,7 @@
       else if (wStep === 'welcome') wShow('account');
       else if (wStep === 'account') await wAccount();
       else if (wStep === 'cv') wShow('answers');
-      else if (wStep === 'answers') { if (await saveProfile($('w-answers'))) wShow('jobs'); }
-      else if (wStep === 'jobs') { if (await wSaveJobs()) wShow(auto() ? 'linkedin' : 'done'); }
+      else if (wStep === 'answers') { if (await saveProfile($('w-answers'))) wShow('linkedin'); }
       else if (wStep === 'linkedin') wShow('done');
       else if (wStep === 'done') await finishSetup(auto());
     } catch (e) {
@@ -2021,13 +2066,29 @@
     return chanTag(j) + fitBadge;
   }
 
+  let prevQueueCount = -1;
   async function loadQueue(quiet) {
     try {
       const d = await api('/api/copilot');
+      const prev = prevQueueCount;
       queue = d.items || [];
+      prevQueueCount = queue.length;
       searchLinks = d.search_links || [];
       searchWhere = d.location || '';
       paintQueue();
+      if (prev >= 0 && queue.length > prev) {
+        const newest = queue[0];
+        if (newest) {
+          showPopupPill({
+            type: 'job',
+            icon: '💼',
+            title: 'New Matching Job',
+            sub: (newest.title || 'Job') + (newest.company ? ' • ' + newest.company : ''),
+            actText: 'View',
+            onAct: () => { go('queue'); openSheet(newest.id); }
+          });
+        }
+      }
     } catch (e) { if (!quiet) toast(e.message, true); }
   }
   function paintQueue() {

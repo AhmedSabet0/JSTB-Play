@@ -650,6 +650,22 @@ public final class Api {
                     + "as a text-based PDF, or upload it as a .txt file.");
         }
         engine.config.saveCv(name, raw, text);
+        List<String> titles = Profile.extractTitles(text);
+        if (!titles.isEmpty()) {
+            engine.config.set("KEYWORDS", String.join("\n", titles));
+        }
+        Map<String, Object> p = engine.profile.get();
+        if (p == null) p = new HashMap<String, Object>();
+        Map<String, Object> autoProfile = Profile.fromCvText(text);
+        for (String k : new String[]{"phone", "graduation_year", "earliest_job_year"}) {
+            if (Json.str(p, k).isEmpty() && !Json.str(autoProfile, k).isEmpty()) {
+                p.put(k, autoProfile.get(k));
+            }
+        }
+        if (!titles.isEmpty()) {
+            p.put("titles", titles);
+        }
+        engine.profile.save(p);
         return Json.obj("ok", true, "name", name, "chars", text.length(), "preview", Util.cut(text, 600));
     }
 
@@ -713,11 +729,11 @@ public final class Api {
                 if (!Account.serverBuiltIn() && b.containsKey("server")) {
                     acc.setServer(Json.str(b, "server"));
                 }
-                engine.platform.openLink(acc.googleStart(), "browser", "", "");
+                engine.platform.openLink(acc.googleStart(), "google-auth", "", "");
                 return Json.obj("ok", true);
             }
             if (what.equals("google-link")) {     // an email account adds Google (and its Drive)
-                engine.platform.openLink(acc.googleLink(), "browser", "", "");
+                engine.platform.openLink(acc.googleLink(), "google-auth", "", "");
                 return Json.obj("ok", true);
             }
             if (what.equals("google-claim")) {    // back in the app without the link from the page after Google

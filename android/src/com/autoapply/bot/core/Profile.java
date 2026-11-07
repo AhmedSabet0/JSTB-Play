@@ -139,9 +139,32 @@ public final class Profile {
             }
         }
         int firstJob = earliestJobYear(text);
+        List<String> titles = extractTitles(text);
         return Json.obj("phone", clean("phone", phone), "city", "", "graduation_year", best > 0 ? String.valueOf(best) : "",
                 "earliest_job_year", firstJob > 0 ? String.valueOf(firstJob) : "",
-                "english", "", "titles", new ArrayList<Object>(), "location", "");
+                "english", "", "titles", titles, "location", "");
+    }
+
+    /** Extracts candidate job titles directly from the CV text. */
+    public static List<String> extractTitles(String cvText) {
+        List<String> titles = new ArrayList<String>();
+        if (cvText == null || cvText.trim().isEmpty()) {
+            return titles;
+        }
+        Pattern p = Pattern.compile("(?i)\\b(DevOps(?:\\s+Engineer)?|Software\\s+(?:Engineer|Developer)|Frontend(?:\\s+Developer)?|Backend(?:\\s+Developer)?|Full(?:\\s*|-)Stack(?:\\s+Developer)?|Cloud(?:\\s+Engineer)?|Site\\s+Reliability\\s+Engineer|SRE|System(?:s)?\\s+(?:Administrator|Engineer)|IT\\s+Support(?:\\s+Engineer)?|Technical\\s+Support|Data\\s+(?:Engineer|Scientist|Analyst)|QA\\s+(?:Engineer|Tester)|Network\\s+Engineer|Mobile\\s+Developer|Android\\s+Developer|iOS\\s+Developer|Solution(?:s)?\\s+Architect|Information\\s+Technology\\s+Specialist)\\b");
+        Matcher m = p.matcher(cvText);
+        Set<String> seen = new HashSet<String>();
+        while (m.find()) {
+            String raw = m.group(1).trim();
+            String norm = raw.substring(0, 1).toUpperCase(Locale.ROOT) + raw.substring(1);
+            String lower = norm.toLowerCase(Locale.ROOT);
+            if (!seen.contains(lower)) {
+                seen.add(lower);
+                titles.add(norm);
+                if (titles.size() >= 5) break;
+            }
+        }
+        return titles;
     }
 
     /** Finds the earliest job start year from the CV text (looking in experience sections or job date ranges). */
