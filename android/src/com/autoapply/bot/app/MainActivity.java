@@ -1261,31 +1261,11 @@ public final class MainActivity extends Activity {
             pickSiteFile(params);
             return;
         }
-        new AlertDialog.Builder(this)
-                .setTitle("Attach a file")
-                .setItems(new CharSequence[]{"Your CV (" + cvName + ")", "Another file…"}, new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface d, int which) {
-                        if (which == 0) {
-                            if (browserFiles != null) {
-                                browserFiles.onReceiveValue(new Uri[]{FilesProvider.uriForCv(cvName)});
-                                browserFiles = null;
-                            }
-                        } else {
-                            pickSiteFile(params);
-                        }
-                    }
-                })
-                .setOnCancelListener(new DialogInterface.OnCancelListener() {
-                    @Override
-                    public void onCancel(DialogInterface d) {
-                        if (browserFiles != null) {
-                            browserFiles.onReceiveValue(null);
-                            browserFiles = null;
-                        }
-                    }
-                })
-                .show();
+        if (browserFiles != null) {
+            browserFiles.onReceiveValue(new Uri[]{FilesProvider.uriForCv(cvName)});
+            browserFiles = null;
+            Toast.makeText(this, "Uploaded CV: " + cvName, Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void pickSiteFile(WebChromeClient.FileChooserParams params) {

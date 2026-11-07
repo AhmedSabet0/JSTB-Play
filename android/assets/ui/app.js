@@ -161,7 +161,7 @@
     if (firstState) {
       firstState = false;
       if (mustUpdate()) go('update');
-      else if (!state.setup.setup_done) startSetup();
+      else if (!state.setup.setup_done || !state.setup.has_cv) startSetup(!state.setup.has_cv ? 'cv' : undefined);
       else go('home');
       setTimeout(takePending, 50);
     } else if (mustUpdate() && view !== 'update') {
@@ -399,7 +399,7 @@
     }
     await loadProfile();
     const first = wFirst(state.setup);
-    wShow(first === 'welcome' || first === 'account' ? 'cv' : first);
+    wShow(!state.setup.has_cv ? 'cv' : (first === 'welcome' || first === 'account' ? 'cv' : first));
     kickSuggest(false);
   }
   async function googleStart(where) {
@@ -804,8 +804,10 @@
         let text = '';
         if (/\.pdf$/i.test(file.name)) text = await pdfText(file);
         const r = await api('/api/cv', { name: file.name, data: reader.result, text });
-        $('cv-preview').textContent = r.preview;
-        $('cv-preview-box').hidden = false;
+        if ($('cv-preview')) $('cv-preview').textContent = r.preview;
+        if ($('cv-preview-box')) $('cv-preview-box').hidden = false;
+        if ($('home-cv-preview')) $('home-cv-preview').textContent = r.preview;
+        if ($('home-cv-preview-box')) $('home-cv-preview-box').hidden = false;
         toast('CV saved.');
         delete zone.dataset.busy;
         await refresh();
@@ -827,6 +829,20 @@
     ['dragleave', 'drop'].forEach((ev) => zone.addEventListener(ev, (e) => { e.preventDefault(); zone.classList.remove('over'); }));
     zone.addEventListener('drop', (e) => uploadCv(e.dataTransfer.files[0], zone));
   });
+  const homeCvViewBtn = $('home-cv-view-btn');
+  if (homeCvViewBtn) {
+    homeCvViewBtn.addEventListener('click', async () => {
+      const box = $('home-cv-preview-box');
+      if (!box.hidden) { box.hidden = true; return; }
+      try {
+        const r = await api('/api/cv');
+        $('home-cv-preview').textContent = r.text || r.preview || 'No text extracted.';
+        box.hidden = false;
+      } catch (e) {
+        toast(e.message, true);
+      }
+    });
+  }
 
   // ------------------------------------------------------------------ background permissions
   const STRICT = /xiaomi|redmi|poco|huawei|honor|oppo|realme|oneplus|vivo|iqoo|tecno|infinix|itel|meizu|asus/;
@@ -910,6 +926,20 @@
     renderBrief(sess, running);
     const inBrief = new Set(((sess && sess.applied) || []).map((x) => x.id));
     renderRecent((s.recent || []).filter((x) => !inBrief.has(x.id)).slice(0, 5));
+    const homeBadge = $('home-cv-badge');
+    const homeView = $('home-cv-view-btn');
+    if (homeBadge) {
+      if (s.setup && s.setup.has_cv) {
+        homeBadge.textContent = 'Active ✓';
+        homeBadge.className = 'tag good';
+        if (homeView) homeView.hidden = false;
+      } else {
+        homeBadge.textContent = 'Missing CV';
+        homeBadge.className = 'tag warn';
+        if (homeView) homeView.hidden = true;
+      }
+    }
+    cvStates();
     renderBanners();
   }
 

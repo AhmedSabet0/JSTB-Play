@@ -75,8 +75,47 @@
     var id = (el.id || '').toLowerCase();
     var val = (el.value || '').toLowerCase();
     var aria = (el.getAttribute('aria-label') || '').toLowerCase();
-    return name.indexOf('resume') >= 0 || id.indexOf('resume') >= 0 || val.indexOf('urn:li:media') >= 0
-      || val.indexOf('resume') >= 0 || aria.indexOf('resume') >= 0;
+    if (name.indexOf('resume') >= 0 || id.indexOf('resume') >= 0 || val.indexOf('resume') >= 0 || aria.indexOf('resume') >= 0) return true;
+    if (val.indexOf('urn:li:media') >= 0 || val.indexOf('fsd_jobseekingdocument') >= 0 || name.indexOf('document-upload') >= 0 || id.indexOf('document-upload') >= 0) return true;
+    if (el.closest && el.closest('[data-test-document-card], .jobs-document-upload, [data-test-document-title], [class*="document-upload"], [class*="resume"], fieldset[class*="resume"], div[class*="resume"]')) return true;
+    return false;
+  }
+
+  function triggerRadioSelect(radio) {
+    if (!radio) return;
+    try {
+      var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked');
+      if (setter && setter.set) {
+        setter.set.call(radio, true);
+      } else {
+        radio.checked = true;
+      }
+      radio.dispatchEvent(new Event('input', { bubbles: true }));
+      radio.dispatchEvent(new Event('change', { bubbles: true }));
+
+      var label = null;
+      if (radio.id) {
+        label = document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(radio.id) : radio.id) + '"]');
+      }
+      if (!label && radio.closest) label = radio.closest('label');
+      if (label) {
+        label.click();
+        label.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      }
+
+      radio.click();
+      radio.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+      var card = radio.closest ? radio.closest('[data-test-document-card], .jobs-document-upload, [role="radio"]') : null;
+      if (card && card !== radio && card !== label) {
+        card.setAttribute('aria-checked', 'true');
+        card.classList.add('is-selected');
+        card.click();
+      }
+    } catch (e) {
+      radio.checked = true;
+      try { radio.click(); } catch (err) {}
+    }
   }
 
   function ensureResumeSelected() {
@@ -87,24 +126,40 @@
         resumeRadios.push(radios[i]);
       }
     }
+
+    var anyChecked = resumeRadios.some(function (r) { return r.checked; });
+    var selectedCard = document.querySelector('[data-test-document-card][aria-checked="true"], .jobs-document-upload.is-selected, [data-test-document-card].is-selected');
+    if (anyChecked || selectedCard) {
+      return true;
+    }
+
     if (resumeRadios.length > 0) {
-      var hasChecked = resumeRadios.some(function (r) { return r.checked; });
-      if (!hasChecked) {
-        resumeRadios[0].click();
-        resumeRadios[0].checked = true;
-        resumeRadios[0].dispatchEvent(new Event('change', { bubbles: true }));
-      }
+      triggerRadioSelect(resumeRadios[0]);
       return true;
     }
-    var cards = document.querySelectorAll('[data-test-document-card], .jobs-document-upload__title, .jobs-document-upload, [data-test-document-title]');
+
+    var cards = document.querySelectorAll('[data-test-document-card], .jobs-document-upload, [data-test-document-title]');
     if (cards.length > 0) {
-      var selected = document.querySelector('[data-test-document-card][aria-checked="true"], .jobs-document-upload.is-selected, [data-test-document-card].is-selected');
-      if (!selected) {
-        var firstCard = cards[0].closest('[data-test-document-card]') || cards[0];
-        firstCard.click();
+      var firstCard = (cards[0].closest && cards[0].closest('[data-test-document-card], .jobs-document-upload')) || cards[0];
+      var internalRadio = firstCard.querySelector('input[type="radio"]');
+      if (internalRadio) {
+        triggerRadioSelect(internalRadio);
+      } else {
+        var label = firstCard.querySelector('label') || firstCard;
+        label.click();
+        firstCard.setAttribute('aria-checked', 'true');
+        firstCard.classList.add('is-selected');
       }
       return true;
     }
+
+    var hasResumeError = document.body && /a resume is required/i.test(document.body.innerText || '');
+    var uploadBtn = document.querySelector('button[aria-label*="Upload resume" i], .jobs-document-upload__upload-button, label[for*="upload"], input[type="file"][accept*="pdf"], input[type="file"]');
+    if ((hasResumeError || cards.length === 0) && uploadBtn) {
+      uploadBtn.click();
+      return true;
+    }
+
     return false;
   }
 
@@ -132,8 +187,7 @@
       if (el.disabled || el.readOnly || SKIP.test(type) || !visible(el)) continue;
       if (type === 'radio' && isResumeRadio(el)) {
         if (!el.checked && !document.querySelector('input[type="radio"][name="' + el.name + '"]:checked')) {
-          el.click();
-          el.checked = true;
+          triggerRadioSelect(el);
         }
         continue;
       }
@@ -398,6 +452,7 @@
     b.style.boxShadow = '0 0 20px rgba(0,200,83,0.8)';
   }
   function toSubmit() {
+    ensureResumeSelected();
     var btns = findModalButtons();
     if (btns.submit) {
       highlightSubmit(btns.submit);

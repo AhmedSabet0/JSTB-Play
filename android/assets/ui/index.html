@@ -211,6 +211,23 @@
 
     <div id="banners"></div>
 
+    <section class="panel home-cv-panel" id="home-cv-panel">
+      <div class="panel-head">
+        <h2>Your CV</h2>
+        <span id="home-cv-badge" class="tag"></span>
+      </div>
+      <label class="drop small-drop" id="home-cv-drop" for="h-cv-file">
+        <input id="h-cv-file" class="cv-input" type="file" accept=".pdf,.txt,application/pdf,text/plain">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5zM12 11l-4 4h3v4h2v-4h3z"/></svg>
+        <b class="cv-title">Choose your CV</b>
+        <span class="cv-state muted">PDF or .txt</span>
+      </label>
+      <div style="margin-top: 10px; display: flex; align-items: center; justify-content: space-between;">
+        <button id="home-cv-view-btn" class="linklike" type="button" style="font-size: 13.5px;" hidden>View extracted CV text</button>
+      </div>
+      <details id="home-cv-preview-box" hidden style="margin-top: 8px;"><summary style="cursor: pointer; color: var(--ink-2); font-size: 13px;">Extracted text (tap to collapse)</summary><pre id="home-cv-preview" style="white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow-y: auto; background: var(--surface-2); padding: 10px; border-radius: var(--r-s); margin-top: 6px;"></pre></details>
+    </section>
+
     <section id="ready-panel" class="panel attention ready-panel" data-auto hidden aria-labelledby="ready-title">
       <div class="panel-head"><h2 id="ready-title">Ready to send</h2><span id="ready-n" class="count" hidden></span></div>
       <p class="hint">Filled up to Submit. Nothing is sent until you tap Apply, and the app keeps preparing the next ones.</p>

@@ -89,6 +89,17 @@ public final class Api {
         if (p.equals("/api/answers")) {
             return Json.obj("answers", engine.store.answersCopy());
         }
+        if (p.equals("/api/cv")) {
+            String text = engine.config.cvText();
+            Map<String, String> cfg = engine.config.load();
+            java.io.File cv = engine.config.cvFile(cfg);
+            String name = cfg.get("CV_NAME");
+            return Json.obj("ok", true, "has_cv", cv != null && text.length() >= 150,
+                    "name", cv == null ? "" : (name == null || name.isEmpty() ? cv.getName() : name),
+                    "chars", text.length(),
+                    "preview", Util.cut(text, 1000),
+                    "text", text);
+        }
         if (p.equals("/api/update")) {
             return updateInfo();
         }
