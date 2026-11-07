@@ -107,7 +107,9 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
                           List<String> rejected, int maxlen, List<String> extra) {
         String key = Util.normKey(question);
         Object cached = noCache ? null : store.answer(key);
-        if ("numeric".equals(kind) && cached != null && !String.valueOf(cached).trim().matches("\\d+(\\.\\d+)?")) {
+        boolean numQ = "numeric".equals(kind) || "number".equals(kind)
+                || Pattern.compile("(?i)\\b(salary|gross|compensation|years?|yrs?|experience|notice|how many)\\b").matcher(question).find();
+        if (numQ && cached != null && !String.valueOf(cached).trim().matches("\\d+(\\.\\d+)?")) {
             cached = null;
         }
         if (cached != null) {

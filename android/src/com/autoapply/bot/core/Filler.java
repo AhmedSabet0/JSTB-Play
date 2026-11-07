@@ -163,17 +163,8 @@ public final class Filler {
                 return "3.5";
             }
             if (l.contains("experience") || l.contains("year")) {
-                String gy = Json.str(p, "graduation_year");
-                int diff = 2;
-                try {
-                    if (!gy.isEmpty()) {
-                        int yr = Integer.parseInt(gy);
-                        int nowYr = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR);
-                        diff = Math.max(1, nowYr - yr);
-                    }
-                } catch (Exception ignored) {
-                }
-                return String.valueOf(diff);
+                int expYears = Profile.totalExperienceYears(p, engine.config.cvText(), Util.now());
+                return String.valueOf(expYears);
             }
             return "2";
         }

@@ -1028,32 +1028,96 @@ public final class MainActivity extends Activity {
         });
     }
 
+    private boolean fillingForm = false;
+
     /** Fill: your answers go into the form on the page. You check them and send it yourself. */
     private void fillForm() {
         if (browserWeb == null) {
             return;
         }
+        if (fillingForm) {
+            return;
+        }
+        fillingForm = true;
         final WebView web = browserWeb;
         browserFillBtn.setEnabled(false);
         browserFillBtn.setText("Filling…");
+
+        // Watchdog: Guarantee button is restored within 3.5 seconds if an async callback hangs
+        platform.main.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (fillingForm) {
+                    fillDone();
+                }
+            }
+        }, 3500);
+
         web.evaluateJavascript(fillScript() + "\n;window.AAFill.collect()", new ValueCallback<String>() {
             @Override
             public void onReceiveValue(String raw) {
                 final Object fields = Json.tryParse(jsText(raw));
                 if (!(fields instanceof List) || ((List<?>) fields).isEmpty()) {
-                    web.evaluateJavascript("window.AAFill.frames()", new ValueCallback<String>() {
+                    // Check if modal has Next / Review button (e.g. on Resume step)
+                    web.evaluateJavascript("window.AAFill && window.AAFill.review()", new ValueCallback<String>() {
                         @Override
-                        public void onReceiveValue(String fr) {
-                            List<Object> frames = Json.arr(Json.tryParse(jsText(fr)));
-                            fillDone();
-                            if (!frames.isEmpty() && web == browserWeb) {
-                                web.loadUrl(String.valueOf(frames.get(0)));
-                                Toast.makeText(MainActivity.this, "The form was inside the page, so it is open on its own now. "
-                                        + "Tap Fill the form again.", Toast.LENGTH_LONG).show();
-                            } else {
-                                Toast.makeText(MainActivity.this, "No form on this page yet. Tap the site's Apply button, then "
-                                        + "Fill the form.", Toast.LENGTH_LONG).show();
+                        public void onReceiveValue(String rv) {
+                            Map<String, Object> v = Json.map(Json.tryParse(jsText(rv)));
+                            String btnType = Json.str(v, "button_type");
+                            boolean hasModal = "next".equals(btnType) || "review".equals(btnType) || "submit".equals(btnType);
+                            if (hasModal) {
+                                fillDone();
+                                if ("submit".equals(btnType)) {
+                                    reviewSubmit.setText("Submit Application");
+                                    reviewSubmit.setTextColor(Color.WHITE);
+                                    reviewSubmit.setBackground(round(0xff00c853, 0));
+                                    showReview("Application ready. Tap Submit Application below to send.", false, true);
+                                    web.evaluateJavascript("window.AAFill && window.AAFill.toSubmit()", null);
+                                } else {
+                                    reviewSubmit.setText("review".equals(btnType) ? "Review Application" : "Next Step");
+                                    reviewSubmit.setTextColor(dark ? 0xffe7edf6 : 0xff13213c);
+                                    reviewSubmit.setBackground(round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
+                                    showReview("Step ready. Tap " + reviewSubmit.getText() + " to proceed.", false, true);
+                                    if (browserAuto) {
+                                        platform.main.postDelayed(new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                if (web == browserWeb && !destroyed) {
+                                                    web.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
+                                                        @Override
+                                                        public void onReceiveValue(String s) {
+                                                            platform.main.postDelayed(new Runnable() {
+                                                                @Override
+                                                                public void run() {
+                                                                    if (web == browserWeb && !destroyed) {
+                                                                        fillForm();
+                                                                    }
+                                                                }
+                                                            }, 600);
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        }, 400);
+                                    }
+                                }
+                                return;
                             }
+                            web.evaluateJavascript("window.AAFill.frames()", new ValueCallback<String>() {
+                                @Override
+                                public void onReceiveValue(String fr) {
+                                    List<Object> frames = Json.arr(Json.tryParse(jsText(fr)));
+                                    fillDone();
+                                    if (!frames.isEmpty() && web == browserWeb) {
+                                        web.loadUrl(String.valueOf(frames.get(0)));
+                                        Toast.makeText(MainActivity.this, "The form was inside the page, so it is open on its own now. "
+                                                + "Tap Fill the form again.", Toast.LENGTH_LONG).show();
+                                    } else {
+                                        Toast.makeText(MainActivity.this, "No form on this page yet. Tap the site's Apply button, then "
+                                                + "Fill the form.", Toast.LENGTH_LONG).show();
+                                    }
+                                }
+                            });
                         }
                     });
                     return;
@@ -1063,96 +1127,118 @@ public final class MainActivity extends Activity {
                 bridgePool.execute(new Runnable() {
                     @Override
                     public void run() {
-                        String out = platform.api.handle("/api/fill", Json.stringify(Json.obj("id", job, "title", title,
-                                "company", "", "fields", fields)));
-                        final Map<String, Object> r = Json.map(Json.tryParse(out));
-                        platform.main.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                if (web != browserWeb || destroyed) {
-                                    return;
-                                }
-                                if (Boolean.FALSE.equals(r.get("ok"))) {
-                                    fillDone();
-                                    Toast.makeText(MainActivity.this, Json.str(r, "error"), Toast.LENGTH_LONG).show();
-                                    return;
-                                }
-                                final List<Object> skipped = Json.arr(r.get("skipped"));
-                                web.evaluateJavascript("window.AAFill.apply(" + Json.stringify(r.get("answers")) + ")",
-                                        new ValueCallback<String>() {
-                                            @Override
-                                            public void onReceiveValue(String n) {
-                                                fillDone();
-                                                final int filled = (int) Json.num(Json.obj("n", Json.tryParse(n)), "n", 0);
-                                                if (!browserFilled) {
-                                                    browserFilled = true;
-                                                    watchThanks(web);
-                                                }
-                                                web.evaluateJavascript("window.AAFill.review()", new ValueCallback<String>() {
+                        try {
+                            String out = platform.api.handle("/api/fill", Json.stringify(Json.obj("id", job, "title", title,
+                                    "company", "", "fields", fields)));
+                            final Map<String, Object> r = Json.map(Json.tryParse(out));
+                            platform.main.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    try {
+                                        if (web != browserWeb || destroyed) {
+                                            fillDone();
+                                            return;
+                                        }
+                                        if (Boolean.FALSE.equals(r.get("ok"))) {
+                                            fillDone();
+                                            Toast.makeText(MainActivity.this, Json.str(r, "error"), Toast.LENGTH_LONG).show();
+                                            return;
+                                        }
+                                        final List<Object> skipped = Json.arr(r.get("skipped"));
+                                        web.evaluateJavascript("window.AAFill.apply(" + Json.stringify(r.get("answers")) + ")",
+                                                new ValueCallback<String>() {
                                                     @Override
-                                                    public void onReceiveValue(String rv) {
-                                                        Map<String, Object> v = Json.map(Json.tryParse(jsText(rv)));
-                                                        final List<String> left = Json.strings(v.get("missing"));
-                                                        final String btnType = Json.str(v, "button_type");
-                                                        StringBuilder t = new StringBuilder(filled == 0
-                                                                ? "Fields ready."
-                                                                : "Filled " + filled + (filled == 1 ? " field" : " fields") + " (in green).");
-                                                        if (!left.isEmpty()) {
-                                                            t.append(' ').append(left.size()).append(left.size() == 1 ? " needs" : " need")
-                                                                    .append(" you: ").append(Util.cut(Util.join(", ", left), 120)).append('.');
-                                                        }
-                                                        if (Json.bool(v, "file")) {
-                                                            t.append(" Attach your CV with the site's file button.");
-                                                        }
-                                                        if ("submit".equals(btnType)) {
-                                                            reviewSubmit.setText("Submit Application");
-                                                            reviewSubmit.setTextColor(Color.WHITE);
-                                                            reviewSubmit.setBackground(round(0xff00c853, 0));
-                                                            t.append(" Tap Submit Application below to send.");
-                                                        } else if ("review".equals(btnType)) {
-                                                            reviewSubmit.setText("Review Application");
-                                                            reviewSubmit.setTextColor(dark ? 0xffe7edf6 : 0xff13213c);
-                                                            reviewSubmit.setBackground(round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
-                                                            t.append(" Tap Review Application to proceed.");
-                                                        } else {
-                                                            reviewSubmit.setText("Next Step");
-                                                            reviewSubmit.setTextColor(dark ? 0xffe7edf6 : 0xff13213c);
-                                                            reviewSubmit.setBackground(round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
-                                                            t.append(" Tap Next Step to proceed.");
-                                                        }
-                                                        showReview(t.toString(), !left.isEmpty(), true);
-
-                                                        if (browserAuto && left.isEmpty() && ("next".equals(btnType) || "review".equals(btnType))) {
-                                                            platform.main.postDelayed(new Runnable() {
+                                                    public void onReceiveValue(String n) {
+                                                        try {
+                                                            fillDone();
+                                                            final int filled = (int) Json.num(Json.obj("n", Json.tryParse(n)), "n", 0);
+                                                            if (!browserFilled) {
+                                                                browserFilled = true;
+                                                                watchThanks(web);
+                                                            }
+                                                            web.evaluateJavascript("window.AAFill.review()", new ValueCallback<String>() {
                                                                 @Override
-                                                                public void run() {
-                                                                    if (web == browserWeb && !destroyed) {
-                                                                        web.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
-                                                                            @Override
-                                                                            public void onReceiveValue(String s) {
-                                                                                platform.main.postDelayed(new Runnable() {
-                                                                                    @Override
-                                                                                    public void run() {
-                                                                                        if (web == browserWeb && !destroyed) {
-                                                                                            fillForm();
-                                                                                        }
+                                                                public void onReceiveValue(String rv) {
+                                                                    try {
+                                                                        Map<String, Object> v = Json.map(Json.tryParse(jsText(rv)));
+                                                                        final List<String> left = Json.strings(v.get("missing"));
+                                                                        final String btnType = Json.str(v, "button_type");
+                                                                        StringBuilder t = new StringBuilder(filled == 0
+                                                                                ? "Fields ready."
+                                                                                : "Filled " + filled + (filled == 1 ? " field" : " fields") + " (in green).");
+                                                                        if (!left.isEmpty()) {
+                                                                            t.append(' ').append(left.size()).append(left.size() == 1 ? " needs" : " need")
+                                                                                    .append(" you: ").append(Util.cut(Util.join(", ", left), 120)).append('.');
+                                                                        }
+                                                                        if (Json.bool(v, "file")) {
+                                                                            t.append(" Attach your CV with the site's file button.");
+                                                                        }
+                                                                        if ("submit".equals(btnType)) {
+                                                                            reviewSubmit.setText("Submit Application");
+                                                                            reviewSubmit.setTextColor(Color.WHITE);
+                                                                            reviewSubmit.setBackground(round(0xff00c853, 0));
+                                                                            t.append(" Tap Submit Application below to send.");
+                                                                        } else if ("review".equals(btnType)) {
+                                                                            reviewSubmit.setText("Review Application");
+                                                                            reviewSubmit.setTextColor(dark ? 0xffe7edf6 : 0xff13213c);
+                                                                            reviewSubmit.setBackground(round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
+                                                                            t.append(" Tap Review Application to proceed.");
+                                                                        } else {
+                                                                            reviewSubmit.setText("Next Step");
+                                                                            reviewSubmit.setTextColor(dark ? 0xffe7edf6 : 0xff13213c);
+                                                                            reviewSubmit.setBackground(round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
+                                                                            t.append(" Tap Next Step to proceed.");
+                                                                        }
+                                                                        showReview(t.toString(), !left.isEmpty(), true);
+
+                                                                        if (browserAuto && left.isEmpty() && ("next".equals(btnType) || "review".equals(btnType))) {
+                                                                            platform.main.postDelayed(new Runnable() {
+                                                                                @Override
+                                                                                public void run() {
+                                                                                    if (web == browserWeb && !destroyed) {
+                                                                                        web.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
+                                                                                            @Override
+                                                                                            public void onReceiveValue(String s) {
+                                                                                                platform.main.postDelayed(new Runnable() {
+                                                                                                    @Override
+                                                                                                    public void run() {
+                                                                                                        if (web == browserWeb && !destroyed) {
+                                                                                                            fillForm();
+                                                                                                        }
+                                                                                                    }
+                                                                                                }, 700);
+                                                                                            }
+                                                                                        });
                                                                                     }
-                                                                                }, 800);
-                                                                            }
-                                                                        });
+                                                                                }
+                                                                            }, 500);
+                                                                        } else if ("submit".equals(btnType)) {
+                                                                            browserAuto = false;
+                                                                            web.evaluateJavascript("window.AAFill && window.AAFill.toSubmit()", null);
+                                                                        }
+                                                                    } catch (Throwable t2) {
+                                                                        fillDone();
                                                                     }
                                                                 }
-                                                            }, 600);
-                                                        } else if ("submit".equals(btnType)) {
-                                                            browserAuto = false;
-                                                            web.evaluateJavascript("window.AAFill && window.AAFill.toSubmit()", null);
+                                                            });
+                                                        } catch (Throwable t1) {
+                                                            fillDone();
                                                         }
                                                     }
                                                 });
-                                            }
-                                        });
-                            }
-                        });
+                                    } catch (Throwable th) {
+                                        fillDone();
+                                    }
+                                }
+                            });
+                        } catch (Throwable th) {
+                            platform.main.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    fillDone();
+                                }
+                            });
+                        }
                     }
                 });
             }
@@ -1160,6 +1246,7 @@ public final class MainActivity extends Activity {
     }
 
     private void fillDone() {
+        fillingForm = false;
         if (browserFillBtn != null) {
             browserFillBtn.setEnabled(true);
             browserFillBtn.setText("Fill the form");

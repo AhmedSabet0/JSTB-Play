@@ -138,8 +138,64 @@ public final class Profile {
                 }
             }
         }
+        int firstJob = earliestJobYear(text);
         return Json.obj("phone", clean("phone", phone), "city", "", "graduation_year", best > 0 ? String.valueOf(best) : "",
+                "earliest_job_year", firstJob > 0 ? String.valueOf(firstJob) : "",
                 "english", "", "titles", new ArrayList<Object>(), "location", "");
+    }
+
+    /** Finds the earliest job start year from the CV text (looking in experience sections or job date ranges). */
+    public static int earliestJobYear(String cvText) {
+        if (cvText == null || cvText.trim().isEmpty()) {
+            return -1;
+        }
+        int thisYear = Calendar.getInstance().get(Calendar.YEAR);
+
+        Pattern secPat = Pattern.compile("(?is)(?:work\\s+|professional\\s+|employment\\s+)?experience\\b.*?(?:education|academic|certification|course|language|skill|\\z)");
+        Matcher secMat = secPat.matcher(cvText);
+        String targetText = secMat.find() ? secMat.group() : cvText;
+
+        int earliest = -1;
+        Pattern rangePat = Pattern.compile("(?i)\\b(19[89]\\d|20[0-4]\\d)\\s*(?:[-–—/]|to)\\s*(?:present|current|now|ongoing|\\b(19[89]\\d|20[0-4]\\d)\\b)");
+        Matcher m = rangePat.matcher(targetText);
+        while (m.find()) {
+            int y = Integer.parseInt(m.group(1));
+            if (y >= 1990 && y <= thisYear) {
+                if (earliest < 0 || y < earliest) {
+                    earliest = y;
+                }
+            }
+        }
+
+        Pattern monthYearPat = Pattern.compile("(?i)(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)[a-z]*\\.?\\s+(19[89]\\d|20[0-4]\\d)\\s*(?:[-–—/]|to)");
+        Matcher mm = monthYearPat.matcher(targetText);
+        while (mm.find()) {
+            int y = Integer.parseInt(mm.group(1));
+            if (y >= 1990 && y <= thisYear) {
+                if (earliest < 0 || y < earliest) {
+                    earliest = y;
+                }
+            }
+        }
+
+        return earliest;
+    }
+
+    /**
+     * Total years of experience calculated from the start of the candidate's first job in the CV until now.
+     * Falls back to years since graduation or 2.
+     */
+    public static int totalExperienceYears(Map<String, Object> p, String cvText, double now) {
+        int jobYear = earliestJobYear(cvText);
+        int thisYear = Calendar.getInstance().get(Calendar.YEAR);
+        if (jobYear > 1980 && jobYear <= thisYear) {
+            return Math.max(1, thisYear - jobYear);
+        }
+        int gradYears = yearsSince(Json.str(p, "graduation_year"), now);
+        if (gradYears >= 0) {
+            return Math.max(1, gradYears);
+        }
+        return 2;
     }
 
     /** Whole years since graduating (counted from July of that year), or -1 when the year is not set. */
@@ -723,35 +779,58 @@ public final class Profile {
     private Hit experience(Map<String, Object> p, String q, String kind, List<String> opts, String cv, double now) {
         String s = subject(q);
         if (s == null) {
-            return null;
+            if (!has(q, "experience") || !has(q, "years?|yrs?|how many|how long|total")) {
+                return null;
+            }
+            s = "";
         }
+        int totalYears = totalExperienceYears(p, cv, now);
+        int firstJob = earliestJobYear(cv);
+        String jobYearStr = firstJob > 0 ? String.valueOf(firstJob) : Json.str(p, "graduation_year");
+
         Integer own = store == null ? null : Facts.skillYears(store.factsCopy(), s);
         int years;
         String why;
+        boolean inCvFound = s.isEmpty() || inCv(s, cv);
+
         if (own != null) {
             years = own;
             why = "your info: " + (s.isEmpty() ? "experience in total" : "'" + s + "'") + " = " + own + " years";
+        } else if (inCvFound) {
+            years = totalYears;
+            why = (s.isEmpty() ? "total experience" : "'" + s + "' is in your CV") + ": " + years + " years since your first job (" + (jobYearStr.isEmpty() ? "earliest role" : jobYearStr) + ")";
         } else {
-            years = yearsSince(Json.str(p, "graduation_year"), now);
-            if (years < 0 || (!s.isEmpty() && !inCv(s, cv))) {
-                return null;  // not in your CV or your info: you or the AI answer it
-            }
-            why = (s.isEmpty() ? "" : "'" + s + "' is in your CV; ") + "years since you graduated in " + Json.str(p, "graduation_year");
+            years = 0;
+            why = "'" + s + "' is not mentioned in your CV";
         }
+
         if (isYesNo(opts) || (opts.isEmpty() && has(q, "^(do|does|have|are|is) you\\b") && !"numeric".equals(kind))) {
+            if (!inCvFound) {
+                return yesNo(opts, false, why);
+            }
             Matcher m = Pattern.compile("(?:at least|minimum(?: of)?|min\\.?|more than|over)\\s+(\\d+)|(\\d+)\\s*\\+|(\\d+) or more").matcher(q);
             if (!m.find()) {
-                return s.isEmpty() ? null : yesNo(opts, own == null || own > 0, own == null ? "'" + s + "' is in your CV" : why);
+                return yesNo(opts, true, why);
             }
             String n = m.group(1) != null ? m.group(1) : m.group(2) != null ? m.group(2) : m.group(3);
             boolean strict = m.group(0).startsWith("more than") || m.group(0).startsWith("over");
             int need = Integer.parseInt(n);
             return yesNo(opts, strict ? years > need : years >= need, why);
         }
+
         if (!opts.isEmpty()) {
             String pick = pickByNumber(opts, years, "years");
-            return pick == null ? null : new Hit(pick, why);
+            if (pick == null && years == 0) {
+                for (String o : opts) {
+                    if (has(o.toLowerCase(Locale.ROOT), "\\b(0|none|no experience|< 1|less than 1)\\b")) {
+                        pick = o;
+                        break;
+                    }
+                }
+            }
+            return new Hit(pick != null ? pick : opts.get(0), why);
         }
+
         boolean months = q.contains("month") && !q.contains("year");
         return new Hit(String.valueOf(months ? years * 12 : years), why);
     }

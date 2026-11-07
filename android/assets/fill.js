@@ -60,8 +60,68 @@
     return !!(el.required || el.getAttribute('aria-required') === 'true' || /\*\s*$/.test(String(label)));
   }
 
+  function isNumericInput(el, label) {
+    var type = (el.getAttribute('type') || el.tagName).toLowerCase();
+    var mode = (el.getAttribute('inputmode') || el.inputMode || '').toLowerCase();
+    if (type === 'number' || mode === 'numeric' || mode === 'decimal') return true;
+    var lab = String(label || '').toLowerCase();
+    return /\b(how many (years|months|days)|years of experience|how long have you|gross salary|expected salary|current salary|salary|compensation|notice period in days|gpa)\b/i.test(lab)
+      || /\b(experience|salary|gross|pay|ctc|wage)\b/i.test(lab);
+  }
+
+  function isResumeRadio(el) {
+    if (!el || (el.getAttribute('type') || '').toLowerCase() !== 'radio') return false;
+    var name = (el.name || '').toLowerCase();
+    var id = (el.id || '').toLowerCase();
+    var val = (el.value || '').toLowerCase();
+    var aria = (el.getAttribute('aria-label') || '').toLowerCase();
+    return name.indexOf('resume') >= 0 || id.indexOf('resume') >= 0 || val.indexOf('urn:li:media') >= 0
+      || val.indexOf('resume') >= 0 || aria.indexOf('resume') >= 0;
+  }
+
+  function ensureResumeSelected() {
+    var radios = document.querySelectorAll('input[type="radio"]');
+    var resumeRadios = [];
+    for (var i = 0; i < radios.length; i++) {
+      if (isResumeRadio(radios[i])) {
+        resumeRadios.push(radios[i]);
+      }
+    }
+    if (resumeRadios.length > 0) {
+      var hasChecked = resumeRadios.some(function (r) { return r.checked; });
+      if (!hasChecked) {
+        resumeRadios[0].click();
+        resumeRadios[0].checked = true;
+        resumeRadios[0].dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return true;
+    }
+    var cards = document.querySelectorAll('[data-test-document-card], .jobs-document-upload__title, .jobs-document-upload, [data-test-document-title]');
+    if (cards.length > 0) {
+      var selected = document.querySelector('[data-test-document-card][aria-checked="true"], .jobs-document-upload.is-selected, [data-test-document-card].is-selected');
+      if (!selected) {
+        var firstCard = cards[0].closest('[data-test-document-card]') || cards[0];
+        firstCard.click();
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function hasExistingResume() {
+    var radios = document.querySelectorAll('input[type="radio"]');
+    for (var i = 0; i < radios.length; i++) {
+      if (isResumeRadio(radios[i])) return true;
+    }
+    if (document.querySelector('[data-test-document-card], .jobs-document-upload, [data-test-document-title]')) {
+      return true;
+    }
+    return false;
+  }
+
   var fields = [];
   function collect() {
+    ensureResumeSelected();
     fields = [];
     var out = [];
     var groups = {};
@@ -70,6 +130,13 @@
       var el = els[i];
       var type = (el.getAttribute('type') || el.tagName).toLowerCase();
       if (el.disabled || el.readOnly || SKIP.test(type) || !visible(el)) continue;
+      if (type === 'radio' && isResumeRadio(el)) {
+        if (!el.checked && !document.querySelector('input[type="radio"][name="' + el.name + '"]:checked')) {
+          el.click();
+          el.checked = true;
+        }
+        continue;
+      }
       if (type === 'radio' || type === 'checkbox') {
         var name = el.name || el.id || ('aa' + i);
         var g = groups[type + ':' + name];
@@ -80,18 +147,20 @@
         continue;
       }
       var rawLabel = (el.id && document.querySelector('label[for="' + el.id + '"]')) ? document.querySelector('label[for="' + el.id + '"]').innerText : '';
+      var lbl = rawLabel || labelOf(el);
+      var isNum = isNumericInput(el, lbl);
       var f = {
         key: 'f' + fields.length,
-        label: labelOf(el),
+        label: lbl,
         kind: el.tagName === 'SELECT' ? 'select' : el.tagName === 'TEXTAREA' ? 'textarea'
-          : type === 'email' ? 'email' : type === 'tel' ? 'tel' : type === 'number' ? 'number' : type === 'url' ? 'url'
+          : isNum ? 'number' : type === 'email' ? 'email' : type === 'tel' ? 'tel' : type === 'number' ? 'number' : type === 'url' ? 'url'
             : type === 'date' ? 'date' : 'text',
         options: el.tagName === 'SELECT' ? Array.prototype.map.call(el.options, function (o) { return clean(o.text); })
           .filter(function (t) { return t && !/^(select|choose|please select|--)/i.test(t); }) : [],
         value: el.tagName === 'SELECT' ? (el.selectedIndex > 0 ? clean(el.options[el.selectedIndex].text) : '') : String(el.value || ''),
         placeholder: clean(el.getAttribute('placeholder') || ''),
         maxlength: el.maxLength > 0 ? el.maxLength : 0,
-        required: isRequired(el, rawLabel || labelOf(el)),
+        required: isRequired(el, lbl),
       };
       fields.push({ f: f, els: [el] });
       out.push(f);
@@ -119,7 +188,13 @@
   function setValue(el, v) {
     var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     var desc = Object.getOwnPropertyDescriptor(proto, 'value');
-    if (desc && desc.set) desc.set.call(el, v); else el.value = v;
+    var str = Array.isArray(v) ? v.join(', ') : String(v == null ? '' : v);
+    var type = (el.getAttribute('type') || '').toLowerCase();
+    var mode = (el.getAttribute('inputmode') || el.inputMode || '').toLowerCase();
+    if (type === 'number' || mode === 'numeric' || mode === 'decimal' || isNumericInput(el, labelOf(el))) {
+      str = str.replace(/[^0-9.]/g, '');
+    }
+    if (desc && desc.set) desc.set.call(el, str); else el.value = str;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.dispatchEvent(new Event('blur', { bubbles: true }));
@@ -234,9 +309,13 @@
     return !String(el.value || '').trim();
   }
   function fileWanted() {
+    if (hasExistingResume()) {
+      ensureResumeSelected();
+      return false;
+    }
     var f = document.querySelectorAll('input[type="file"]');
     for (var i = 0; i < f.length; i++) {
-      if (!(f[i].files && f[i].files.length)) return true;
+      if (visible(f[i]) && !(f[i].files && f[i].files.length)) return true;
     }
     return false;
   }
@@ -252,19 +331,21 @@
     return out;
   }
   function findModalButtons() {
+    ensureResumeSelected();
     var modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"], .modal-content, .artdeco-modal, body');
     var btns = (modal || document).querySelectorAll('button, input[type="submit"], [role="button"]');
     var res = { next: null, review: null, submit: null };
     for (var i = 0; i < btns.length; i++) {
       var b = btns[i];
-      if (!visible(b) || b.disabled) continue;
+      if (!visible(b)) continue;
       var t = labelText(b).toLowerCase();
       var aria = clean(b.getAttribute('aria-label') || '').toLowerCase();
+      var hasEasyNext = b.hasAttribute('data-easy-apply-next-button');
       if (/submit application|submit/.test(t) || /submit application|submit/.test(aria)) {
         res.submit = b;
-      } else if (/review/.test(t) || /review/.test(aria)) {
+      } else if (/review application|review your application|review/.test(t) || /review application|review your application|review/.test(aria)) {
         res.review = b;
-      } else if (/next|continue/.test(t) || /next|continue/.test(aria)) {
+      } else if (hasEasyNext || /next|continue/.test(t) || /next|continue/.test(aria)) {
         res.next = b;
       }
     }
@@ -272,13 +353,15 @@
   }
 
   function review() {
+    ensureResumeSelected();
     var btns = findModalButtons();
     var bType = btns.submit ? 'submit' : btns.review ? 'review' : btns.next ? 'next' : 'none';
     return JSON.stringify({
       missing: missing(),
       file: fileWanted(),
       submit: !!(btns.submit || btns.review || btns.next || submitButton()),
-      button_type: bType
+      button_type: bType,
+      has_resume: hasExistingResume()
     });
   }
   var nextAt = 0;
@@ -334,7 +417,20 @@
     return true;
   }
   function advance() {
+    ensureResumeSelected();
     var btns = findModalButtons();
+    if (btns.next && !btns.next.disabled) {
+      btns.next.click();
+      return 'next';
+    }
+    if (btns.review && !btns.review.disabled) {
+      btns.review.click();
+      return 'review';
+    }
+    if (btns.submit && !btns.submit.disabled) {
+      highlightSubmit(btns.submit);
+      return 'ready_submit';
+    }
     if (btns.next) {
       btns.next.click();
       return 'next';
@@ -342,10 +438,6 @@
     if (btns.review) {
       btns.review.click();
       return 'review';
-    }
-    if (btns.submit) {
-      highlightSubmit(btns.submit);
-      return 'ready_submit';
     }
     return 'none';
   }

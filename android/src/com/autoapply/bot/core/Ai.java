@@ -29,9 +29,8 @@ public final class Ai {
     }
 
     public static final String RULE_NUMERIC = "Reply with a whole number only (digits, no words, no currency). For 'years of "
-            + "experience with X' use the candidate notes first, then estimate from the CV; if X is in neither, reply 0. "
-            + "For salary use the candidate notes; if they say nothing, give a realistic monthly amount in the local currency "
-            + "of the job's country for this role and the candidate's seniority. For notice period use the notes; if the "
+            + "experience with X' use the total years from earliest job in CV if X is in CV, or 0 if X is not in CV. "
+            + "For salary reply with digits only (e.g. 20000), never text words or currency symbols. For notice period use the notes; if the "
             + "question does not name a unit, answer in days.";
 
     public static String rule(String kind) {
@@ -53,8 +52,10 @@ public final class Ai {
     public static final String ANSWER_SYSTEM = "You fill job application forms for the candidate. Answer truthfully using "
             + "only the CV, the candidate notes and the known answers. Never invent degrees, certifications, employers or "
             + "skills. For voluntary demographic questions (gender, race, ethnicity, veteran, disability, sexual orientation) "
-            + "pick the 'prefer not to say' or 'decline' option when one exists. For expected salary use the candidate notes; "
-            + "if they say nothing, reply 'Negotiable' for text fields. Reply with JSON only.";
+            + "pick the 'prefer not to say' or 'decline' option when one exists. For salary or compensation questions always "
+            + "reply with a clean number in digits only (e.g. 20000, 25000), never text words like 'Negotiable'. "
+            + "For years of experience with X, reply with total years since first job in CV if X is in CV, or 0 if not. "
+            + "Reply with JSON only.";
 
     public String apiKey;
     public String model;
