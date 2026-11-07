@@ -40,7 +40,6 @@ public final class Engine {
     /** Your data, the same in your account: every phone you sign in on, and your Google Drive. */
     public final Sync sync;
     public volatile Session session;
-    private volatile LinkedIn current;
 
     public Engine(Platform platform, File dataDir) {
         this.platform = platform;
@@ -86,12 +85,7 @@ public final class Engine {
         }
     }
 
-    /** You finished signing in on the sign-in screen: check again right away. */
     public void signInDone() {
-        LinkedIn li = current;
-        if (li != null) {
-            li.signInSignal.set(true);
-        }
     }
 
     public void join(long millis) throws InterruptedException {
@@ -209,157 +203,7 @@ public final class Engine {
     }
 
     public void run(Bot.Options args) {
-        Util.STOP.set(false);
-        Util.stopReason = "";
-        String mode = args.dryRun ? "dry" : (args.noSubmit ? "test" : "apply");
-        Util.setStatus("state", "starting", "message", "Starting...", "job", null, "next_slot_at", 0, "mode", mode, "error", "");
-        final Session sess = new Session(mode);
-        session = sess;
-        Map<String, String> cfg = config.load();
-        Questions.askMode = Questions.askModeOf(cfg.get("NEW_QUESTIONS"));
-        Questions.askTimeoutMin = Config.cfgInt(cfg, "ASK_TIMEOUT_MIN", 0, 1440);
-        if (args.retryFailed) {
-            log(store.forgetFailed() + " stuck / error jobs will be tried again.");
-        }
-        int oldErrors = store.forgetOldOpenErrors();
-        if (oldErrors > 0) {
-            log(oldErrors + " job(s) where the Easy Apply window did not open before this version will be tried again.");
-        }
-        File cv = config.cvFile(cfg);
-        String cvText = config.cvText();
-        String problem = null;
-        if (cv == null) {
-            problem = "Add your CV in Settings first.";
-        } else if (cvText.length() < 150) {
-            problem = "Could not read the text of your CV (it may be a scanned image). Upload a text-based PDF or a .txt file.";
-        }
-        if (problem == null) {
-            Util.setStatus("message", "Checking your account...");
-            problem = checkAccount();
-        }
-        if (problem != null) {
-            log(problem);
-            Util.setStatus("state", "error", "message", problem, "error", problem);
-            return;
-        }
-        Ai ai = newAi(cvText, notesForAi(), "apply");
-        reporter.runStarted(mode);
-        String[] fin = {"idle", "Finished"};
-        Page page;
-        Util.setStatus("message", "Opening the browser...");
-        try {
-            page = platform.newPage();
-        } catch (RuntimeException e) {
-            log("Could not open the browser: " + Util.shortError(e));
-            Util.setStatus("state", "error", "message", "Could not open the browser", "error", Util.shortError(e));
-            reporter.runEnded();
-            return;
-        }
-        log("Browser: " + platform.browserName());
-        LinkedIn li = new LinkedIn(page, new Scripts(platform.pageScripts()), config.debugDir);
-        li.setCv(cv, cfg.get("CV_NAME"));
-        current = li;
-        boolean started = false;
-        Bot bot = null;
-        try {
-            Util.setStatus("message", "Checking the AI connection...");
-            checkAi(ai);
-            Util.setStatus("message", "Choosing what to search for...");
-            StringBuilder location = new StringBuilder();
-            List<String> keywords = pickSearch(cfg, ai, location);
-            bot = new Bot(this, cfg, args, ai, li, keywords, location.toString(), sess);
-            started = true;
-            log("Searches: " + Util.join(" | ", keywords) + (location.length() > 0 ? "  (" + location + ")" : "")
-                    + ". Pace: max " + bot.perHour + " per hour, " + bot.perDay + " per day. Applies at " + bot.minScore
-                    + "/10 or more.");
-            Util.setStatus("message", "Opening LinkedIn...");
-            li.ensureSignedIn();
-            String lang = li.uiLanguage();
-            if (!lang.isEmpty() && !lang.toLowerCase().startsWith("en")) {
-                log("Warning: your LinkedIn language looks like '" + lang + "'. The bot needs LinkedIn in English "
-                        + "(LinkedIn Settings > Account preferences > Display > Language).");
-            }
-            while (true) {
-                try {
-                    bot.run();
-                    break;
-                } catch (Util.BrowserClosed e) {
-                    if (bot.reopenPage()) {
-                        log("The bot's page was closed. Opened a new one.");
-                        continue;
-                    }
-                    log("The browser was closed. Start again to continue where it stopped.");
-                    fin = new String[]{"idle", "The browser was closed"};
-                    break;
-                }
-            }
-        } catch (Util.StopRequested e) {
-            String why = Util.stopReason;
-            if (why.isEmpty()) {
-                log("Stopped by you.");
-                fin = new String[]{"idle", "Stopped"};
-            } else {
-                fin = new String[]{"idle", why};
-            }
-            Util.shield();
-            try {
-                li.discard();  // never leave a half-filled form open
-            } catch (RuntimeException x) {
-                // the page may be gone
-            } finally {
-                Util.unshield();
-            }
-        } catch (Util.BrowserClosed e) {
-            log("The browser was closed. Start again to continue where it stopped.");
-            fin = new String[]{"idle", "The browser was closed"};
-        } catch (Ai.FatalAIError e) {
-            log("AI error: " + e.getMessage());
-            fin = new String[]{"error", e.getMessage()};
-        } catch (Bot.TooManyErrors e) {
-            log("Stopped after 10 errors in a row. LinkedIn may have changed its layout.");
-            fin = new String[]{"error", "Stopped after 10 errors in a row"};
-        } catch (SetupError e) {
-            log(e.getMessage());
-            fin = new String[]{"error", e.getMessage()};
-        } catch (RuntimeException e) {
-            log("Unexpected error: " + Util.shortError(e));
-            fin = new String[]{"error", Util.shortError(e)};
-        } finally {
-            current = null;
-            sess.ended = Util.now();
-            List<String> lines = new ArrayList<String>();
-            Map<String, Object> summary = null;
-            if (started) {
-                summary = sess.save(summaryFile, briefFile);
-                lines = sess.lines();
-                for (String line : lines) {
-                    log(line);
-                }
-                int[] counts = Bot.appliedCounts(store.stateCopy(), Util.now());
-                log("Applied today: " + counts[1] + ".");
-            }
-            try {
-                platform.closePage(li.page);
-            } catch (RuntimeException e) {
-                // already closed
-            }
-            if (li.dumped) {
-                try {
-                    zipDir(config.debugDir, debugZip);
-                    log("Pages where something went wrong were saved (share debug.zip from the menu for troubleshooting).");
-                } catch (IOException e) {
-                    // optional
-                }
-            }
-            Util.STOP.set(false);
-            Util.stopReason = "";
-            Util.setStatus("state", fin[0], "message", fin[1], "job", null, "next_slot_at", 0,
-                    "error", "error".equals(fin[0]) ? fin[1] : "");
-            reporter.runEnded();
-            if (started) {
-                platform.onSessionEnd(summary, lines);
-            }
-        }
+        Util.setStatus("state", "idle", "message", "1-Tap Assisted Apply is ready.", "job", null);
     }
 
     static void zipDir(File dir, File zip) throws IOException {
