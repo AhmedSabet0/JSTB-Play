@@ -94,7 +94,7 @@ public final class Api {
             Map<String, String> cfg = engine.config.load();
             java.io.File cv = engine.config.cvFile(cfg);
             String name = cfg.get("CV_NAME");
-            return Json.obj("ok", true, "has_cv", cv != null && text.length() >= 150,
+            return Json.obj("ok", true, "has_cv", cv != null && cv.isFile() && cv.length() > 0,
                     "name", cv == null ? "" : (name == null || name.isEmpty() ? cv.getName() : name),
                     "chars", text.length(),
                     "preview", Util.cut(text, 1000),

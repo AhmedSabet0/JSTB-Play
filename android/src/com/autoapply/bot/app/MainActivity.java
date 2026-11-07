@@ -1430,6 +1430,12 @@ public final class MainActivity extends Activity {
                                                                                     + "})";
                                                                             web.evaluateJavascript(jsPill, null);
                                                                         } else if ("next".equals(btnType) || "review".equals(btnType)) {
+                                                                            try {
+                                                                                android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                                                                                if (imm != null && web != null) {
+                                                                                    imm.hideSoftInputFromWindow(web.getWindowToken(), 0);
+                                                                                }
+                                                                            } catch (Exception ignored) {}
                                                                             platform.main.postDelayed(new Runnable() {
                                                                                 @Override
                                                                                 public void run() {
@@ -1489,6 +1495,12 @@ public final class MainActivity extends Activity {
             browserFillBtn.setEnabled(true);
             browserFillBtn.setText("Fill the form");
         }
+        try {
+            android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null && browserWeb != null) {
+                imm.hideSoftInputFromWindow(browserWeb.getWindowToken(), 0);
+            }
+        } catch (Exception ignored) {}
     }
 
     /** The site asks for a file: your CV, photo, or another file from the phone. */
@@ -1514,17 +1526,17 @@ public final class MainActivity extends Activity {
             return;
         }
 
-        Map<String, Object> cv = platform.engine.config.status(platform.engine.config.load());
-        final String cvName = Json.str(cv, "cv_name");
-        if (!Json.bool(cv, "has_cv")) {
-            pickSiteFile(params);
-            return;
+        File cvFile = platform.engine.config.cvFile(platform.engine.config.load());
+        if (cvFile != null && cvFile.isFile() && cvFile.length() > 0) {
+            final String cvName = cvFile.getName();
+            if (browserFiles != null) {
+                browserFiles.onReceiveValue(new Uri[]{FilesProvider.uriForCv(cvName)});
+                browserFiles = null;
+                Toast.makeText(this, "Uploaded CV: " + cvName, Toast.LENGTH_SHORT).show();
+                return;
+            }
         }
-        if (browserFiles != null) {
-            browserFiles.onReceiveValue(new Uri[]{FilesProvider.uriForCv(cvName)});
-            browserFiles = null;
-            Toast.makeText(this, "Uploaded CV: " + cvName, Toast.LENGTH_SHORT).show();
-        }
+        pickSiteFile(params);
     }
 
     private void pickSiteFile(WebChromeClient.FileChooserParams params) {

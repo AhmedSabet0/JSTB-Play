@@ -79,7 +79,22 @@
     if (name.indexOf('cv') >= 0 || id.indexOf('cv') >= 0 || val.indexOf('cv') >= 0 || aria.indexOf('cv') >= 0) return true;
     if (val.indexOf('urn:li:media') >= 0 || val.indexOf('fsd_jobseekingdocument') >= 0 || id.indexOf('fsd_jobseekingdocument') >= 0 || name.indexOf('document') >= 0 || id.indexOf('document') >= 0) return true;
 
-    // Check parent hierarchy up to 10 levels for resume context
+    if (el.closest) {
+      if (el.closest('[data-test-document-card], .jobs-document-upload, .jobs-document-upload-redesign, .jobs-resume-picker__resume-list-item, [class*="resume-picker"], [class*="document-upload"], [class*="document-card"], [class*="resume-list"], [class*="resume-item"]')) {
+        return true;
+      }
+      var sec = el.closest('section, fieldset, div[class*="form"], div[class*="step"], div[class*="group"], div[class*="container"]');
+      if (sec) {
+        var h = sec.querySelector('h1, h2, h3, h4, legend, label, p, span');
+        var ht = h ? clean(h.innerText || h.textContent || '').toLowerCase() : '';
+        if (ht.indexOf('resume') >= 0 || ht.indexOf('cv') >= 0 || ht.indexOf('السيرة الذاتية') >= 0) {
+          if (el.closest('label, li, div') && (el.type === 'radio' || el.type === 'checkbox' || el.getAttribute('role') === 'radio')) {
+            return true;
+          }
+        }
+      }
+    }
+
     var p = el;
     for (var i = 0; i < 10 && p; i++, p = p.parentElement) {
       if (!p) break;
@@ -126,8 +141,21 @@
     }
   }
 
+  function clickElement(el) {
+    if (!el) return;
+    try { el.scrollIntoView({ block: 'center', behavior: 'instant' }); } catch (e) {}
+    try { el.focus(); } catch (e) {}
+    var opts = { bubbles: true, cancelable: true, view: window };
+    try { el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mousedown', opts)); } catch (e) {}
+    try { el.dispatchEvent(new PointerEvent('pointerup', opts)); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('mouseup', opts)); } catch (e) {}
+    try { el.click(); } catch (e) {}
+    try { el.dispatchEvent(new MouseEvent('click', opts)); } catch (e) {}
+  }
+
   function getTopResumeCards() {
-    var list = document.querySelectorAll('[data-test-document-card], .jobs-document-upload, .jobs-document-upload-redesign, .jobs-resume-picker__resume-list-item');
+    var list = document.querySelectorAll('[data-test-document-card], .jobs-document-upload, .jobs-document-upload-redesign, .jobs-resume-picker__resume-list-item, li[class*="resume"], div[class*="resume-item"]');
     var cards = [];
     for (var i = 0; i < list.length; i++) {
       var item = list[i];
@@ -142,35 +170,22 @@
 
   var lastResumeUploadAttempt = 0;
   function ensureResumeSelected() {
-    // 1. First priority: Upload the registered CV from the app!
-    var uploadBtn = document.querySelector('button[aria-label*="Upload resume" i], button.jobs-document-upload__upload-button, label[for*="upload"], input[type="file"][accept*="pdf"], input[type="file"]');
-    var now = Date.now();
-    
-    // Check if an upload is actively in progress
-    var isUploading = document.querySelector('.artdeco-loader, [role="progressbar"], .jobs-document-upload__loading, .jobs-document-upload--loading');
+    // Only real upload loaders (NOT role="progressbar" which is LinkedIn's step indicator!)
+    var isUploading = document.querySelector('.artdeco-loader, .jobs-document-upload__loading, .jobs-document-upload--loading, [data-test-document-upload-loading], .upload-spinner');
     if (isUploading) {
       return true;
     }
 
-    // If uploadBtn exists and we haven't triggered it in the last 15 seconds:
-    if (uploadBtn && (now - lastResumeUploadAttempt > 15000)) {
-      lastResumeUploadAttempt = now;
-      try {
-        uploadBtn.click();
-        return true;
-      } catch (e) { /* fallback to selecting */ }
-    }
-
-    // 2. Select ONLY the first (most recent) resume card/radio
     var cards = getTopResumeCards();
-    if (cards.length > 0) {
+    if (cards && cards.length > 0) {
+      // 1. Select the top (most recent) resume
       var firstCard = cards[0];
-      var internalRadio = firstCard.querySelector('input[type="radio"]');
+      var internalRadio = firstCard.querySelector('input[type="radio"], [role="radio"]');
       if (internalRadio) {
         if (!internalRadio.checked) triggerRadioSelect(internalRadio);
       } else {
         var label = firstCard.querySelector('label') || firstCard;
-        label.click();
+        try { label.click(); } catch (e) {}
         firstCard.setAttribute('aria-checked', 'true');
         firstCard.classList.add('is-selected');
       }
@@ -178,20 +193,31 @@
       // Explicitly uncheck and clean outlines on subsequent cards
       for (var k = 1; k < cards.length; k++) {
         var otherCard = cards[k];
-        var otherRadio = otherCard.querySelector('input[type="radio"]');
+        var otherRadio = otherCard.querySelector('input[type="radio"], [role="radio"]');
         if (otherRadio) {
           otherRadio.checked = false;
-          if (otherRadio.parentElement) {
-            otherRadio.parentElement.style.outline = 'none';
-            otherRadio.parentElement.style.boxShadow = 'none';
-          }
         }
         otherCard.removeAttribute('aria-checked');
         otherCard.classList.remove('is-selected');
         otherCard.style.outline = 'none';
         otherCard.style.boxShadow = 'none';
+        if (otherCard.parentElement) {
+          otherCard.parentElement.style.outline = 'none';
+          otherCard.parentElement.style.boxShadow = 'none';
+        }
       }
       return true;
+    }
+
+    // No existing cards on page: click upload button to feed from app
+    var uploadBtn = document.querySelector('button[aria-label*="Upload resume" i], button.jobs-document-upload__upload-button, label[for*="upload"], input[type="file"][accept*="pdf"], input[type="file"]');
+    var now = Date.now();
+    if (uploadBtn && (now - lastResumeUploadAttempt > 15000)) {
+      lastResumeUploadAttempt = now;
+      try {
+        clickElement(uploadBtn);
+        return true;
+      } catch (e) {}
     }
 
     var radios = document.querySelectorAll('input[type="radio"]');
@@ -219,15 +245,12 @@
     return false;
   }
 
-    return false;
-  }
-
   function hasExistingResume() {
     var radios = document.querySelectorAll('input[type="radio"]');
     for (var i = 0; i < radios.length; i++) {
       if (isResumeRadio(radios[i])) return true;
     }
-    if (document.querySelector('[data-test-document-card], .jobs-document-upload, [data-test-document-title]')) {
+    if (document.querySelector('[data-test-document-card], .jobs-document-upload, [data-test-document-title], [class*="resume"], [class*="cv"]')) {
       return true;
     }
     return false;
@@ -363,6 +386,11 @@
         n++;
       }
     });
+    try {
+      if (document.activeElement && document.activeElement.blur) {
+        document.activeElement.blur();
+      }
+    } catch (e) {}
     return n;
   }
 
@@ -393,7 +421,7 @@
   // ---------------------------------------------------------------- Fill and review
   // The site's own "Apply" button, when the job page shows the form only after it. Never a "Submit" button, and never
   // "Apply with LinkedIn / Indeed / Google" (those are other sites' sign-ins).
-  var START = /^(easy apply( on linkedin)?|apply( now| for (this|the) (job|position|role))?|start (your )?application|apply here|i'?m interested|apply online)$/i;
+  var START = /^(easy apply( on linkedin)?|apply( now| for (this|the|a)? (job|position|role))?|start (your )?application|apply here|i'?m interested|apply online|تقدم للوظيفة|قدم الآن|التقديم للوظيفة)$/i;
   var OTHER = /indeed|facebook|seek|glassdoor|resume ?parse|upload resume to autofill/i;
   function labelText(el) {
     return clean(el.innerText || el.value || el.getAttribute('aria-label') || '');
@@ -401,6 +429,9 @@
   function startButton() {
     var liBtn = document.querySelector(".jobs-apply-button--top-card button, .jobs-s-apply button, button.jobs-apply-button, button[aria-label*='Easy Apply'], a[aria-label*='Easy Apply'], a[href*='openSDUIApplyFlow']");
     if (liBtn && visible(liBtn)) return liBtn;
+
+    var wzBtn = document.querySelector('button[class*="apply" i], a[href*="/apply/" i], button[data-test-id*="apply" i], button[aria-label*="Apply" i]');
+    if (wzBtn && visible(wzBtn) && START.test(labelText(wzBtn))) return wzBtn;
 
     var list = document.querySelectorAll('a, button, [role="button"], input[type="button"]');
     for (var i = 0; i < list.length; i++) {
@@ -450,21 +481,24 @@
   }
   function findModalButtons() {
     ensureResumeSelected();
-    var modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"], .modal-content, .artdeco-modal, body');
-    var btns = (modal || document).querySelectorAll('button, input[type="submit"], [role="button"]');
+    var allBtns = document.querySelectorAll('button, input[type="submit"], [role="button"], a[role="button"]');
     var res = { next: null, review: null, submit: null };
-    for (var i = 0; i < btns.length; i++) {
-      var b = btns[i];
-      if (!visible(b)) continue;
+    for (var i = 0; i < allBtns.length; i++) {
+      var b = allBtns[i];
+      if (b.disabled || !visible(b)) continue;
       var t = labelText(b).toLowerCase();
       var aria = clean(b.getAttribute('aria-label') || '').toLowerCase();
       var hasEasyNext = b.hasAttribute('data-easy-apply-next-button');
-      if (/submit application|submit/.test(t) || /submit application|submit/.test(aria)) {
-        res.submit = b;
-      } else if (/review application|review your application|review/.test(t) || /review application|review your application|review/.test(aria)) {
-        res.review = b;
-      } else if (hasEasyNext || /next|continue/.test(t) || /next|continue/.test(aria)) {
-        res.next = b;
+
+      // Ignore dismiss, close, or job alert toast buttons
+      if (/dismiss|close|manage alerts|إلغاء|إغلاق/.test(t) || /dismiss|close/.test(aria)) continue;
+
+      if (/submit application|submit|إرسال|ارسال التقديم|تأكيد التقديم/i.test(t) || /submit application|submit/i.test(aria)) {
+        if (!res.submit) res.submit = b;
+      } else if (/review application|review your application|review|مراجعة/i.test(t) || /review application|review your application|review/i.test(aria)) {
+        if (!res.review) res.review = b;
+      } else if (hasEasyNext || /next( step)?|continue|save and continue|التالي|متابعة/i.test(t) || /next|continue/i.test(aria)) {
+        if (!res.next) res.next = b;
       }
     }
     return res;
@@ -537,17 +571,17 @@
   }
   function advance() {
     ensureResumeSelected();
-    var isUploading = document.querySelector('.artdeco-loader, [role="progressbar"], .jobs-document-upload__loading, .jobs-document-upload--loading');
+    var isUploading = document.querySelector('.artdeco-loader, .jobs-document-upload__loading, .jobs-document-upload--loading, [data-test-document-upload-loading], .upload-spinner');
     if (isUploading) {
       return 'uploading';
     }
     var btns = findModalButtons();
     if (btns.next && !btns.next.disabled) {
-      btns.next.click();
+      clickElement(btns.next);
       return 'next';
     }
     if (btns.review && !btns.review.disabled) {
-      btns.review.click();
+      clickElement(btns.review);
       return 'review';
     }
     if (btns.submit && !btns.submit.disabled) {
@@ -555,11 +589,11 @@
       return 'ready_submit';
     }
     if (btns.next) {
-      btns.next.click();
+      clickElement(btns.next);
       return 'next';
     }
     if (btns.review) {
-      btns.review.click();
+      clickElement(btns.review);
       return 'review';
     }
     return 'none';
@@ -575,7 +609,7 @@
   }
 
   // The site's "thank you" after you sent it: the app marks the job Applied.
-  var THANKS = /thank(s| you) for (applying|your application)|application (has been |was )?(received|submitted|sent)|we('ve| have) received your application|successfully (submitted|applied)|your application is (complete|in)|applied to|application sent|easy apply submitted/i;
+  var THANKS = /thank(s| you) for (applying|your application)|application (has been |was )?(received|submitted|sent)|we('ve| have) received your application|successfully (submitted|applied)|your application is (complete|in)|applied to|application sent|easy apply submitted|تم إرسال طلبك|تم التقديم بنجاح/i;
   function done() {
     var modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
     var modalText = modal ? clean(modal.innerText) : '';

@@ -177,7 +177,7 @@ public final class Config {
         File cv = cvFile(cfg);
         int chars = cv == null ? 0 : cvText().length();
         String cvName = cfg.get("CV_NAME");
-        return Json.obj("has_cv", cv != null && chars >= 150,
+        return Json.obj("has_cv", cv != null && cv.isFile() && cv.length() > 0,
                 "cv_name", cv == null ? "" : (cvName == null || cvName.isEmpty() ? cv.getName() : cvName), "cv_chars", chars);
     }
 }
