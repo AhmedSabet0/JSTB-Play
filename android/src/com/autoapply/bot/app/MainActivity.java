@@ -628,8 +628,8 @@ public final class MainActivity extends Activity {
             }
 
             @Override
-            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.getUrl() != null && request.getUrl().toString().contains("disallowed_useragent")) {
+            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                if (failingUrl != null && failingUrl.contains("disallowed_useragent")) {
                     closePanes();
                     openCustomTab(url);
                 }
@@ -644,7 +644,9 @@ public final class MainActivity extends Activity {
     void openCustomTab(String url) {
         try {
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-            intent.putExtra("android.support.customtabs.extra.SESSION", (android.os.IBinder) null);
+            Bundle extras = new Bundle();
+            extras.putBinder("android.support.customtabs.extra.SESSION", null);
+            intent.putExtras(extras);
             intent.putExtra("android.support.customtabs.extra.TOOLBAR_COLOR", dark ? 0xff0d1420 : 0xffffffff);
             intent.putExtra("android.support.customtabs.extra.TITLE_VISIBILITY", 1);
             intent.putExtra("android.support.customtabs.extra.ENABLE_URLBAR_HIDING", true);

@@ -654,8 +654,8 @@ public final class Api {
         if (!titles.isEmpty()) {
             engine.config.set("KEYWORDS", String.join("\n", titles));
         }
-        Map<String, Object> p = engine.profile.get();
-        if (p == null) p = new HashMap<String, Object>();
+        Map<String, Object> p = engine.profile.load();
+        if (p == null) p = new java.util.HashMap<String, Object>();
         Map<String, Object> autoProfile = Profile.fromCvText(text);
         for (String k : new String[]{"phone", "graduation_year", "earliest_job_year"}) {
             if (Json.str(p, k).isEmpty() && !Json.str(autoProfile, k).isEmpty()) {
