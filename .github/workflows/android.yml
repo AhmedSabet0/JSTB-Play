@@ -40,7 +40,7 @@ jobs:
       - name: Android build tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq aapt2 dalvik-exchange zipalign apksigner
+          sudo apt-get install -y -qq aapt dalvik-exchange zipalign apksigner
           ls "$ANDROID_HOME/platforms/android-34/android.jar" || yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34"
           curl -fsSL -o "$RUNNER_TEMP/bundletool.jar" https://github.com/google/bundletool/releases/download/1.18.1/bundletool-all-1.18.1.jar
 

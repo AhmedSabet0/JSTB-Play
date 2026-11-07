@@ -14,6 +14,8 @@ unset JAVA_TOOL_OPTIONS
 SERVER_URL=${SERVER_URL:-}
 ANDROID_JAR=${ANDROID_JAR:-/home/claude/android-tools/android-34.jar}
 BUNDLETOOL=${BUNDLETOOL:-/home/claude/android-tools/bundletool/bundletool.jar}
+AAPT2=${AAPT2:-$(find "${ANDROID_HOME:-}" -name aapt2 2>/dev/null | sort -V | tail -n 1 || true)}
+AAPT2=${AAPT2:-aapt2}
 KS=${KEYSTORE:-keystore/autoapply.jks}
 KS_PASS=${KS_PASS:-autoapply}
 OUT=out
@@ -64,8 +66,8 @@ compile_java() {
 }
 
 # Android App Bundle (resources in protobuf format from aapt2, assembled by bundletool)
-aapt2 compile --dir "$OUT/res" -o "$OUT/res.zip"
-aapt2 link --proto-format -o "$OUT/base-proto.apk" -I "$ANDROID_JAR" --manifest "$OUT/AndroidManifest.xml" \
+"$AAPT2" compile --dir "$OUT/res" -o "$OUT/res.zip"
+"$AAPT2" link --proto-format -o "$OUT/base-proto.apk" -I "$ANDROID_JAR" --manifest "$OUT/AndroidManifest.xml" \
   -A "$OUT/assets" --java "$OUT/gen" --auto-add-overlay "$OUT/res.zip"
 compile_java
 
