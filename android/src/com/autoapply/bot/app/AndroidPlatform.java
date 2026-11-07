@@ -295,5 +295,4 @@ public final class AndroidPlatform implements Platform {
         return Json.obj("flavor", "play", "self_update", false, "server_built_in",
                 !BuildConfig.SERVER_URL.isEmpty());
     }
-    }
 }
