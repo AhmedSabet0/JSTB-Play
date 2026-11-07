@@ -45,6 +45,9 @@ import com.autoapply.bot.R;
 import com.autoapply.bot.core.Json;
 import com.autoapply.bot.core.Util;
 
+import android.accounts.AccountManager;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
@@ -62,6 +65,8 @@ public final class MainActivity extends Activity {
     static final int REQ_FILE = 1;
     static final int REQ_NOTIFY = 2;
     static final int REQ_SITE_FILE = 3;
+    static final int REQ_GOOGLE_ACCOUNT = 1009;
+    static final int REQ_PICK_PROFILE_PHOTO = 1010;
 
     private AndroidPlatform platform;
     private FrameLayout root;
@@ -284,6 +289,45 @@ public final class MainActivity extends Activity {
                 return "";
             }
         }
+
+        @JavascriptInterface
+        public void pickGoogleAccount() {
+            MainActivity.this.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Intent intent = AccountManager.newChooseAccountIntent(
+                                null, null, new String[]{"com.google"}, null, null, null, null);
+                        startActivityForResult(intent, REQ_GOOGLE_ACCOUNT);
+                    } catch (Throwable t) {
+                        bridgePool.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    platform.api.handle("/api/account/google", "{}");
+                                } catch (Exception e) {}
+                            }
+                        });
+                    }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void pickProfilePhoto() {
+            MainActivity.this.runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                        intent.setType("image/*");
+                        startActivityForResult(intent, REQ_PICK_PROFILE_PHOTO);
+                    } catch (Throwable t) {
+                        Toast.makeText(MainActivity.this, "Cannot pick image: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+                    }
+                }
+            });
+        }
     }
 
     // ------------------------------------------------------------------ intents
@@ -416,8 +460,95 @@ public final class MainActivity extends Activity {
             fileCallback = null;
         }
         if (request == REQ_SITE_FILE && browserFiles != null) {
-            browserFiles.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
+            Uri[] resultUris = WebChromeClient.FileChooserParams.parseResult(result, data);
+            if (resultUris != null && resultUris.length > 0 && resultUris[0] != null) {
+                final Uri chosenUri = resultUris[0];
+                try {
+                    String mime = getContentResolver().getType(chosenUri);
+                    if (mime != null && mime.startsWith("image/")) {
+                        bridgePool.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    InputStream in = getContentResolver().openInputStream(chosenUri);
+                                    File photoFile = new File(getFilesDir(), "profile_photo.jpg");
+                                    FileOutputStream fos = new FileOutputStream(photoFile);
+                                    byte[] buf = new byte[8192];
+                                    int len;
+                                    while ((len = in.read(buf)) != -1) {
+                                        fos.write(buf, 0, len);
+                                    }
+                                    fos.close();
+                                    in.close();
+                                } catch (Exception e) {}
+                            }
+                        });
+                    }
+                } catch (Exception e) {}
+            }
+            browserFiles.onReceiveValue(resultUris);
             browserFiles = null;
+        }
+        if (request == REQ_PICK_PROFILE_PHOTO && result == RESULT_OK && data != null && data.getData() != null) {
+            final Uri chosenUri = data.getData();
+            bridgePool.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        InputStream in = getContentResolver().openInputStream(chosenUri);
+                        File photoFile = new File(getFilesDir(), "profile_photo.jpg");
+                        FileOutputStream fos = new FileOutputStream(photoFile);
+                        byte[] buf = new byte[8192];
+                        int len;
+                        while ((len = in.read(buf)) != -1) {
+                            fos.write(buf, 0, len);
+                        }
+                        fos.close();
+                        in.close();
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                Toast.makeText(MainActivity.this, "Profile photo saved!", Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                    } catch (Exception e) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                Toast.makeText(MainActivity.this, "Failed to save photo: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                    }
+                }
+            });
+        }
+        if (request == REQ_GOOGLE_ACCOUNT) {
+            if (result == RESULT_OK && data != null) {
+                final String accountName = data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME);
+                if (accountName != null && !accountName.isEmpty()) {
+                    bridgePool.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            try {
+                                String url = platform.engine.account.googleStart();
+                                if (url != null && !url.isEmpty()) {
+                                    String fullUrl = url + (url.contains("?") ? "&" : "?") + "login_hint=" + Uri.encode(accountName);
+                                    openCustomTab(fullUrl);
+                                }
+                            } catch (Exception e) {
+                                runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        Toast.makeText(MainActivity.this, "Sign-in error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                                    }
+                                });
+                            }
+                        }
+                    });
+                    return;
+                }
+            }
+            js("window.aaGoogle && window.aaGoogle(JSON.stringify({ok:false, error:'Sign-in cancelled'}))");
         }
     }
 
@@ -1175,29 +1306,27 @@ public final class MainActivity extends Activity {
                                     reviewSubmit.setText("review".equals(btnType) ? "Review Application" : "Next Step");
                                     reviewSubmit.setTextColor(dark ? 0xffe7edf6 : 0xff13213c);
                                     reviewSubmit.setBackground(round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
-                                    showReview("Step ready. Tap " + reviewSubmit.getText() + " to proceed.", false, true);
-                                    if (browserAuto) {
-                                        platform.main.postDelayed(new Runnable() {
-                                            @Override
-                                            public void run() {
-                                                if (web == browserWeb && !destroyed) {
-                                                    web.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
-                                                        @Override
-                                                        public void onReceiveValue(String s) {
-                                                            platform.main.postDelayed(new Runnable() {
-                                                                @Override
-                                                                public void run() {
-                                                                    if (web == browserWeb && !destroyed) {
-                                                                        fillForm();
-                                                                    }
+                                    showReview("Step ready. Advancing to next step…", false, true);
+                                    platform.main.postDelayed(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (web == browserWeb && !destroyed) {
+                                                web.evaluateJavascript("window.AAFill && window.AAFill.advance()", new ValueCallback<String>() {
+                                                    @Override
+                                                    public void onReceiveValue(String s) {
+                                                        platform.main.postDelayed(new Runnable() {
+                                                            @Override
+                                                            public void run() {
+                                                                if (web == browserWeb && !destroyed) {
+                                                                    fillForm();
                                                                 }
-                                                            }, 600);
-                                                        }
-                                                    });
-                                                }
+                                                            }
+                                                        }, 650);
+                                                    }
+                                                });
                                             }
-                                        }, 400);
-                                    }
+                                        }
+                                    }, 450);
                                 }
                                 return;
                             }
@@ -1289,7 +1418,18 @@ public final class MainActivity extends Activity {
                                                                         }
                                                                         showReview(t.toString(), !left.isEmpty(), true);
 
-                                                                        if (browserAuto && left.isEmpty() && ("next".equals(btnType) || "review".equals(btnType))) {
+                                                                        if (!left.isEmpty()) {
+                                                                            final String firstMissing = left.get(0);
+                                                                            final String jsPill = "window.showPopupPill && window.showPopupPill({"
+                                                                                    + "type:'question',"
+                                                                                    + "icon:'?',"
+                                                                                    + "title:'Question Needed',"
+                                                                                    + "sub:" + Json.stringify(firstMissing) + ","
+                                                                                    + "actText:'Answer',"
+                                                                                    + "onAct:function(){ if(window.AAFill && window.AAFill.focusQuestion) window.AAFill.focusQuestion(" + Json.stringify(firstMissing) + "); }"
+                                                                                    + "})";
+                                                                            web.evaluateJavascript(jsPill, null);
+                                                                        } else if ("next".equals(btnType) || "review".equals(btnType)) {
                                                                             platform.main.postDelayed(new Runnable() {
                                                                                 @Override
                                                                                 public void run() {
@@ -1304,12 +1444,12 @@ public final class MainActivity extends Activity {
                                                                                                             fillForm();
                                                                                                         }
                                                                                                     }
-                                                                                                }, 700);
+                                                                                                }, 650);
                                                                                             }
                                                                                         });
                                                                                     }
                                                                                 }
-                                                                            }, 500);
+                                                                            }, 450);
                                                                         } else if ("submit".equals(btnType)) {
                                                                             browserAuto = false;
                                                                             web.evaluateJavascript("window.AAFill && window.AAFill.toSubmit()", null);
@@ -1351,8 +1491,29 @@ public final class MainActivity extends Activity {
         }
     }
 
-    /** The site asks for a file: your CV, or another file from the phone. */
+    /** The site asks for a file: your CV, photo, or another file from the phone. */
     private void chooseSiteFile(final WebChromeClient.FileChooserParams params) {
+        boolean wantsImage = false;
+        if (params != null && params.getAcceptTypes() != null) {
+            for (String type : params.getAcceptTypes()) {
+                if (type != null && (type.contains("image") || type.contains("jpg") || type.contains("jpeg") || type.contains("png"))) {
+                    wantsImage = true;
+                    break;
+                }
+            }
+        }
+        if (wantsImage) {
+            File photo = new File(getFilesDir(), "profile_photo.jpg");
+            if (photo.isFile() && browserFiles != null) {
+                browserFiles.onReceiveValue(new Uri[]{FilesProvider.uriForPhoto()});
+                browserFiles = null;
+                Toast.makeText(this, "Uploaded profile photo", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            pickSiteFile(params);
+            return;
+        }
+
         Map<String, Object> cv = platform.engine.config.status(platform.engine.config.load());
         final String cvName = Json.str(cv, "cv_name");
         if (!Json.bool(cv, "has_cv")) {

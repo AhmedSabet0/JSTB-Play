@@ -224,6 +224,7 @@
       pill.hidden = true;
     }, duration);
   }
+  window.showPopupPill = showPopupPill;
 
   let lastAccCheck = Date.now();
   let lastLists = 0;
@@ -448,6 +449,12 @@
     kickSuggest(false);
   }
   async function googleStart(where) {
+    if (window.AA && window.AA.pickGoogleAccount) {
+      window.AA.pickGoogleAccount();
+      $('w-google-wait').hidden = false;
+      $('w-welcome-wait').hidden = where !== 'welcome';
+      return;
+    }
     const a = acc();
     const body = {};
     const err = where === 'welcome' ? $('w-welcome-err') : $('w-acc-err');

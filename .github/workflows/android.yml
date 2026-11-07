@@ -142,6 +142,24 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: bash android/test/smoke.sh apk
 
+  release:
+    needs: [build]
+    runs-on: ubuntu-24.04
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: play-apk
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.release != '' && needs.build.outputs.release || format('v{0}', needs.build.outputs.name) }}
+          name: JSTB Play Edition ${{ needs.build.outputs.name }}
+          files: dist/*
+          generate_release_notes: true
+
   upload-play:
     needs: [build, check]
     runs-on: ubuntu-24.04

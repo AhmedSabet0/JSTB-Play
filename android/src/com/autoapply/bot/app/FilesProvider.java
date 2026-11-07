@@ -29,9 +29,19 @@ public final class FilesProvider extends ContentProvider {
         return Uri.parse("content://" + AUTHORITY + "/cv/" + Uri.encode(n));
     }
 
+    /** Your profile photo / avatar when a form asks for a photo. */
+    static Uri uriForPhoto() {
+        return Uri.parse("content://" + AUTHORITY + "/photo/profile.jpg");
+    }
+
     private static boolean isCv(Uri uri) {
         java.util.List<String> seg = uri.getPathSegments();
         return seg.size() == 2 && "cv".equals(seg.get(0));
+    }
+
+    private static boolean isPhoto(Uri uri) {
+        java.util.List<String> seg = uri.getPathSegments();
+        return seg.size() == 2 && "photo".equals(seg.get(0));
     }
 
     private File fileFor(Uri uri) throws FileNotFoundException {
@@ -41,6 +51,13 @@ public final class FilesProvider extends ContentProvider {
                 throw new FileNotFoundException("No CV");
             }
             return cv;
+        }
+        if (isPhoto(uri)) {
+            File photo = new File(getContext().getFilesDir(), "profile_photo.jpg");
+            if (!photo.isFile()) {
+                throw new FileNotFoundException("No photo");
+            }
+            return photo;
         }
         String name = uri.getLastPathSegment();
         if (name == null || !name.matches("[A-Za-z0-9._-]+")) {
@@ -68,7 +85,8 @@ public final class FilesProvider extends ContentProvider {
         MatrixCursor c = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
         try {
             File f = fileFor(uri);
-            c.addRow(new Object[]{isCv(uri) ? uri.getLastPathSegment() : f.getName(), f.length()});
+            String displayName = isCv(uri) ? uri.getLastPathSegment() : isPhoto(uri) ? "profile.jpg" : f.getName();
+            c.addRow(new Object[]{displayName, f.length()});
         } catch (FileNotFoundException e) {
             // empty result
         }
@@ -77,9 +95,18 @@ public final class FilesProvider extends ContentProvider {
 
     @Override
     public String getType(Uri uri) {
+        if (isPhoto(uri)) {
+            return "image/jpeg";
+        }
         String n = String.valueOf(uri.getLastPathSegment());
         if (n.toLowerCase(java.util.Locale.ROOT).endsWith(".pdf")) {
             return "application/pdf";
+        }
+        if (n.toLowerCase(java.util.Locale.ROOT).endsWith(".jpg") || n.toLowerCase(java.util.Locale.ROOT).endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (n.toLowerCase(java.util.Locale.ROOT).endsWith(".png")) {
+            return "image/png";
         }
         if (n.endsWith(".csv")) {
             return "text/csv";

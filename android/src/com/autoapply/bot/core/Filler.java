@@ -143,21 +143,20 @@ public final class Filler {
         }
 
         if ("number".equals(kind) || "numeric".equals(kind)) {
-            if (l.contains("salary") || l.contains("compensation") || l.contains("gross") || l.contains("pay") || l.contains("ctc")) {
+            if (l.contains("salary") || l.contains("compensation") || l.contains("gross") || l.contains("pay") || l.contains("ctc") || l.contains("wage")) {
                 boolean cur = l.contains("current") || l.contains("present") || l.contains("existing") || l.contains("now");
                 String sal = Json.str(p, cur ? "current_salary" : "expected_salary");
-                if (!sal.isEmpty()) {
-                    return sal;
+                if (sal.isEmpty()) {
+                    sal = Json.str(p, cur ? "expected_salary" : "current_salary");
                 }
-                String alt = Json.str(p, cur ? "expected_salary" : "current_salary");
-                if (!alt.isEmpty()) {
-                    return alt;
+                if (sal.isEmpty()) {
+                    sal = cur ? "20000" : "25000";
                 }
-                return cur ? "20000" : "25000";
+                return sal.replaceAll("[^0-9]", "");
             }
             if (l.contains("notice") || l.contains("day")) {
                 String n = Json.str(p, "notice_days");
-                return n.isEmpty() ? "30" : n;
+                return (n.isEmpty() ? "30" : n).replaceAll("[^0-9]", "");
             }
             if (l.contains("gpa")) {
                 return "3.5";
@@ -169,13 +168,16 @@ public final class Filler {
             return "2";
         }
 
-        if (l.contains("salary") || l.contains("compensation") || l.contains("gross") || l.contains("pay")) {
+        if (l.contains("salary") || l.contains("compensation") || l.contains("gross") || l.contains("pay") || l.contains("ctc") || l.contains("wage")) {
             boolean cur = l.contains("current") || l.contains("present") || l.contains("existing") || l.contains("now");
             String sal = Json.str(p, cur ? "current_salary" : "expected_salary");
-            if (!sal.isEmpty()) {
-                return sal;
+            if (sal.isEmpty()) {
+                sal = Json.str(p, cur ? "expected_salary" : "current_salary");
             }
-            return cur ? "20000" : "25000";
+            if (sal.isEmpty()) {
+                sal = cur ? "20000" : "25000";
+            }
+            return sal.replaceAll("[^0-9]", "");
         }
         if (l.contains("notice") || l.contains("start")) {
             return "Immediately";

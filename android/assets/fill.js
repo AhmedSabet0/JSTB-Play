@@ -71,30 +71,22 @@
 
   function isResumeRadio(el) {
     if (!el) return false;
-    var type = (el.getAttribute('type') || el.tagName || '').toLowerCase();
-    if (type !== 'radio' && el.getAttribute('role') !== 'radio') {
-      var isCard = el.hasAttribute('data-test-document-card') || el.classList.contains('jobs-document-upload') || el.classList.contains('jobs-resume-picker__resume-list-item');
-      if (!isCard) return false;
-    }
     var name = (el.name || '').toLowerCase();
     var id = (el.id || '').toLowerCase();
     var val = (el.value || '').toLowerCase();
     var aria = (el.getAttribute('aria-label') || '').toLowerCase();
     if (name.indexOf('resume') >= 0 || id.indexOf('resume') >= 0 || val.indexOf('resume') >= 0 || aria.indexOf('resume') >= 0) return true;
     if (name.indexOf('cv') >= 0 || id.indexOf('cv') >= 0 || val.indexOf('cv') >= 0 || aria.indexOf('cv') >= 0) return true;
-    if (val.indexOf('urn:li:media') >= 0 || val.indexOf('fsd_jobseekingdocument') >= 0 || name.indexOf('document') >= 0 || id.indexOf('document') >= 0) return true;
-    if (el.closest) {
-      if (el.closest('[data-test-document-card], [data-test-document-title], [class*="document-upload"], [class*="resume"], [id*="resume"], [id*="document"], fieldset[class*="resume"], div[class*="resume"]')) return true;
-      var sec = el.closest('section, fieldset, div[class*="form"], div[class*="step"], div[class*="group"], div[class*="container"]');
-      if (sec) {
-        var h = sec.querySelector('h1, h2, h3, h4, legend, label, p, span');
-        var ht = h ? clean(h.innerText || h.textContent || '').toLowerCase() : '';
-        if (ht.indexOf('resume') >= 0 || ht.indexOf('cv') >= 0) return true;
-      }
-    }
-    var p = el.parentElement;
-    for (var i = 0; i < 5 && p; i++, p = p.parentElement) {
-      if (p.querySelector && p.querySelector('button[aria-label*="Upload resume" i], .jobs-document-upload__upload-button, [data-test-document-card]')) {
+    if (val.indexOf('urn:li:media') >= 0 || val.indexOf('fsd_jobseekingdocument') >= 0 || id.indexOf('fsd_jobseekingdocument') >= 0 || name.indexOf('document') >= 0 || id.indexOf('document') >= 0) return true;
+
+    // Check parent hierarchy up to 10 levels for resume context
+    var p = el;
+    for (var i = 0; i < 10 && p; i++, p = p.parentElement) {
+      if (!p) break;
+      var pClass = (p.className && typeof p.className === 'string') ? p.className.toLowerCase() : '';
+      if (pClass.indexOf('resume') >= 0 || pClass.indexOf('document-upload') >= 0 || p.hasAttribute('data-test-document-card')) return true;
+      var txt = (p.innerText || p.textContent || '').toLowerCase();
+      if (txt.indexOf('last used on') >= 0 || txt.indexOf('be sure to include an updated resume') >= 0 || (txt.indexOf('upload resume') >= 0 && txt.indexOf('pdf') >= 0)) {
         return true;
       }
     }
@@ -115,7 +107,10 @@
 
       var label = null;
       if (radio.id) {
-        label = document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(radio.id) : radio.id) + '"]');
+        try {
+          var safeId = (window.CSS && CSS.escape) ? CSS.escape(radio.id) : radio.id.replace(/(["\\])/g, '\\$1');
+          label = document.querySelector('label[for="' + safeId + '"]');
+        } catch (e) {}
       }
       if (!label && radio.closest) label = radio.closest('label');
       if (label) {
@@ -125,13 +120,6 @@
 
       radio.click();
       radio.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-
-      var card = radio.closest ? radio.closest('[data-test-document-card], .jobs-document-upload, [role="radio"]') : null;
-      if (card && card !== radio && card !== label) {
-        card.setAttribute('aria-checked', 'true');
-        card.classList.add('is-selected');
-        card.click();
-      }
     } catch (e) {
       radio.checked = true;
       try { radio.click(); } catch (err) {}
@@ -139,7 +127,7 @@
   }
 
   function getTopResumeCards() {
-    var list = document.querySelectorAll('[data-test-document-card], .jobs-document-upload, .jobs-resume-picker__resume-list-item');
+    var list = document.querySelectorAll('[data-test-document-card], .jobs-document-upload, .jobs-document-upload-redesign, .jobs-resume-picker__resume-list-item');
     var cards = [];
     for (var i = 0; i < list.length; i++) {
       var item = list[i];
@@ -173,7 +161,7 @@
       } catch (e) { /* fallback to selecting */ }
     }
 
-    // 2. Fallback: Select ONLY the first (most recent) resume card/radio
+    // 2. Select ONLY the first (most recent) resume card/radio
     var cards = getTopResumeCards();
     if (cards.length > 0) {
       var firstCard = cards[0];
@@ -187,14 +175,21 @@
         firstCard.classList.add('is-selected');
       }
 
-      // Explicitly uncheck and un-mark any subsequent cards
+      // Explicitly uncheck and clean outlines on subsequent cards
       for (var k = 1; k < cards.length; k++) {
         var otherCard = cards[k];
         var otherRadio = otherCard.querySelector('input[type="radio"]');
-        if (otherRadio) otherRadio.checked = false;
+        if (otherRadio) {
+          otherRadio.checked = false;
+          if (otherRadio.parentElement) {
+            otherRadio.parentElement.style.outline = 'none';
+            otherRadio.parentElement.style.boxShadow = 'none';
+          }
+        }
         otherCard.removeAttribute('aria-checked');
         otherCard.classList.remove('is-selected');
         otherCard.style.outline = 'none';
+        otherCard.style.boxShadow = 'none';
       }
       return true;
     }
@@ -213,9 +208,16 @@
       }
       for (var rk = 1; rk < resumeRadios.length; rk++) {
         resumeRadios[rk].checked = false;
+        if (resumeRadios[rk].parentElement) {
+          resumeRadios[rk].parentElement.style.outline = 'none';
+          resumeRadios[rk].parentElement.style.boxShadow = 'none';
+        }
       }
       return true;
     }
+
+    return false;
+  }
 
     return false;
   }
@@ -242,7 +244,7 @@
       var el = els[i];
       var type = (el.getAttribute('type') || el.tagName).toLowerCase();
       if (el.disabled || el.readOnly || SKIP.test(type) || !visible(el)) continue;
-      if (type === 'radio' && isResumeRadio(el)) {
+      if (isResumeRadio(el)) {
         continue;
       }
       if (type === 'radio' || type === 'checkbox') {
@@ -254,7 +256,14 @@
         g.els.push(el);
         continue;
       }
-      var rawLabel = (el.id && document.querySelector('label[for="' + el.id + '"]')) ? document.querySelector('label[for="' + el.id + '"]').innerText : '';
+      var rawLabel = '';
+      if (el.id) {
+        try {
+          var safeId = (window.CSS && CSS.escape) ? CSS.escape(el.id) : el.id.replace(/(["\\])/g, '\\$1');
+          var lblEl = document.querySelector('label[for="' + safeId + '"]');
+          if (lblEl) rawLabel = textOf(lblEl);
+        } catch (e) {}
+      }
       var lbl = rawLabel || labelOf(el);
       var isNum = isNumericInput(el, lbl);
       var f = {
@@ -313,6 +322,7 @@
     return a === b || (a && b && (a.indexOf(b) === 0 || b.indexOf(a) === 0));
   }
   function mark(el) {
+    if (!el || isResumeRadio(el)) return;
     el.style.outline = '2px solid #11805b';
     el.style.outlineOffset = '1px';
   }
@@ -575,6 +585,64 @@
     return (THANKS.test(modalText) || THANKS.test(body.slice(0, 20000))) && openVisible < 2;
   }
 
+  function focusQuestion(label) {
+    if (!label) return;
+    var target = null;
+    for (var i = 0; i < fields.length; i++) {
+      var it = fields[i];
+      if (same(it.f.label, label) || (it.f.label && it.f.label.indexOf(label) >= 0) || (label.indexOf(it.f.label) >= 0)) {
+        target = it.els[0];
+        break;
+      }
+    }
+    if (!target) {
+      var inputs = document.querySelectorAll('input, select, textarea');
+      for (var j = 0; j < inputs.length; j++) {
+        var inp = inputs[j];
+        if (same(labelOf(inp), label)) { target = inp; break; }
+      }
+    }
+    if (target) {
+      target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      try { target.focus({ preventScroll: true }); } catch (e) {}
+      target.style.outline = '3px solid #ff9800';
+      target.style.boxShadow = '0 0 14px rgba(255,152,0,0.6)';
+      setTimeout(function() {
+        target.style.outline = '';
+        target.style.boxShadow = '';
+      }, 4000);
+    }
+  }
+
+  function showFloatingPill(title, sub, onAct) {
+    try {
+      var old = document.getElementById('aa-floating-pill');
+      if (old) old.remove();
+      var pill = document.createElement('div');
+      pill.id = 'aa-floating-pill';
+      pill.style.cssText = 'position:fixed;top:16px;left:16px;right:16px;z-index:9999999;background:#111a2b;color:#ffffff;border-radius:16px;padding:12px 16px;box-shadow:0 8px 32px rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:space-between;gap:12px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;border:1px solid #2a3a55;';
+      pill.innerHTML = '<div style="flex:1;min-width:0;">'
+        + '<div style="font-size:12px;font-weight:700;color:#38bdf8;margin-bottom:2px;">✨ ' + clean(title || 'Question Needed') + '</div>'
+        + '<div style="font-size:14px;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + clean(sub || '') + '</div>'
+        + '</div>'
+        + '<button type="button" style="background:#2563eb;color:#fff;border:none;border-radius:10px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;">Answer</button>';
+      var btn = pill.querySelector('button');
+      var handleAct = function(e) {
+        if (e) e.stopPropagation();
+        pill.remove();
+        if (onAct) onAct();
+      };
+      if (btn) btn.onclick = handleAct;
+      pill.onclick = handleAct;
+      document.body.appendChild(pill);
+      setTimeout(function() { if (pill.parentNode) pill.remove(); }, 8000);
+    } catch (e) {}
+  }
+  window.showPopupPill = function(opt) {
+    if (!opt) return;
+    showFloatingPill(opt.title, opt.sub, opt.onAct);
+  };
+
   document.addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('button, a, [role="button"]');
     if (!b) return;
@@ -589,5 +657,5 @@
   }, true);
 
   window.AAFill = { collect: collect, apply: apply, frames: frames, page: page, clickStart: clickStart, review: review,
-    next: next, toSubmit: toSubmit, advance: advance, doSubmit: doSubmit, done: done };
+    next: next, toSubmit: toSubmit, advance: advance, doSubmit: doSubmit, done: done, focusQuestion: focusQuestion, showFloatingPill: showFloatingPill };
 }());
