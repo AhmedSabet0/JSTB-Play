@@ -170,9 +170,11 @@ jobs:
 
   release:
     # After the emulator check: a build that crashes on start would stop phones from ever updating again.
+    # main: the latest release (phones update to it). Run by hand on another branch: a pre-release to test,
+    # which phones do not update to by themselves.
     needs: [build, check]
     runs-on: ubuntu-24.04
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -186,7 +188,8 @@ jobs:
           name: JSTB ${{ needs.build.outputs.name }}
           files: dist/*
           generate_release_notes: true
-          make_latest: true   # the development build updates to the latest release
+          prerelease: ${{ github.ref != 'refs/heads/main' }}
+          make_latest: ${{ github.ref == 'refs/heads/main' }}   # the development build updates to the latest release
 
   upload-play:
     needs: [build, check]
