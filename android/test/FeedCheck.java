@@ -14,6 +14,7 @@ public class FeedCheck {
         String[] titles = {"Network Engineer", "DevOps Engineer"};
         int bad = 0;
         for (String t : titles) {
+            Thread.sleep(3000);   // as the phone does: LinkedIn answers "busy" to quick searches
             try {
                 List<Map<String, Object>> li = Feed.linkedin(t, "Egypt");
                 notice("LinkedIn '" + t + "': " + li.size() + " jobs" + sample(li));
@@ -32,7 +33,13 @@ public class FeedCheck {
                         : Json.arr(Json.map(Json.tryParse(raw)).get("data")).get(0));
                 notice("Wuzzuf search raw keys: " + Json.map(first.get("attributes")).keySet());
                 List<Map<String, Object>> wz = Feed.wuzzuf(t);
-                notice("Wuzzuf '" + t + "': " + wz.size() + " jobs" + sample(wz));
+                List<Map<String, Object>> kept = new java.util.ArrayList<Map<String, Object>>();
+                for (Map<String, Object> j : wz) {
+                    if (Json.dbl(j, "posted_at", 0) >= Util.now() - Feed.NEW_DAYS * 86400 && Feed.nearby(Json.str(j, "location"), "Egypt")) {
+                        kept.add(j);
+                    }
+                }
+                notice("Wuzzuf '" + t + "': " + wz.size() + " jobs, " + kept.size() + " from the last week in Egypt" + sample(kept));
                 if (wz.isEmpty()) {
                     bad++;
                 }

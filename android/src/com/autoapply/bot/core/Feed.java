@@ -25,6 +25,7 @@ import static com.autoapply.bot.core.Util.log;
 public final class Feed {
     public static final double EVERY = 55 * 60;              // seconds between two rounds by themselves
     static final double KEEP_DAYS = 14;                       // untouched jobs from the feed older than this go
+    static final double NEW_DAYS = 8;                         // only jobs posted within this join (Wuzzuf mixes in old ones)
     static final int PER_TITLE = 25;
     static final int MIN_SCORE = 45;                          // %: below that a job is not worth your time
     static final String UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -99,14 +100,19 @@ public final class Feed {
             String cv = engine.config.cvText().toLowerCase(Locale.ROOT);
             List<Map<String, Object>> found = new ArrayList<Map<String, Object>>();
             int failures = 0;
+            boolean linkedinBusy = false;
             for (String title : titles) {
-                try {
-                    found.addAll(linkedin(title, location));
-                } catch (IOException e) {
-                    failures++;
-                    error = "LinkedIn: " + Util.shortError(e, 80);
+                if (!linkedinBusy) {
+                    try {
+                        found.addAll(linkedin(title, location));
+                    } catch (IOException e) {
+                        failures++;
+                        error = "LinkedIn: " + Util.shortError(e, 80);
+                        linkedinBusy = String.valueOf(e.getMessage()).contains("429");   // busy: leave it alone until next round
+                    }
+                    pause();
+                    pause();   // LinkedIn answers "busy" to quick searches
                 }
-                pause();
                 try {
                     found.addAll(wuzzuf(title));
                 } catch (IOException e) {
@@ -116,7 +122,11 @@ public final class Feed {
                 pause();
             }
             List<Map<String, Object>> keep = new ArrayList<Map<String, Object>>();
+            double newest = Util.now() - NEW_DAYS * 86400;
             for (Map<String, Object> j : found) {
+                if (Json.dbl(j, "posted_at", Util.now()) < newest || !nearby(Json.str(j, "location"), location)) {
+                    continue;   // old, or in another country
+                }
                 int score = score(cv, Json.str(j, "title"), titles, Json.str(j, "location"), location);
                 if (score >= MIN_SCORE) {
                     j.put("score", score);
@@ -125,7 +135,7 @@ public final class Feed {
                 }
             }
             added = engine.copilot.addFound(keep, Util.now() - KEEP_DAYS * 86400);
-            if (failures < titles.size() * 2) {
+            if (failures < titles.size() + (linkedinBusy ? 1 : titles.size())) {
                 error = "";   // one site answered: a hiccup on the other is not worth showing
             }
             log("Job feed: " + found.size() + " jobs found for " + titles.size() + " titles, " + added + " new"
@@ -139,6 +149,28 @@ public final class Feed {
             Util.writeText(stateFile(), Json.pretty(Json.obj("at", lastAt, "added", added, "error", error)));
             running = false;
         }
+    }
+
+    /** A job where you look for work: no place given, remote, or naming your city or country. "Egypt" also takes
+     *  Egyptian cities a job may give without the country. */
+    static boolean nearby(String jobLocation, String yourLocation) {
+        String jl = jobLocation == null ? "" : jobLocation.toLowerCase(Locale.ROOT).trim();
+        String yl = yourLocation == null ? "" : yourLocation.toLowerCase(Locale.ROOT).trim();
+        if (jl.isEmpty() || yl.isEmpty() || jl.contains("remote") || jl.contains(yl)) {
+            return true;
+        }
+        for (String part : yl.split("[,;]")) {
+            String p = part.trim();
+            if (p.length() > 2 && jl.contains(p)) {
+                return true;
+            }
+        }
+        if (yl.contains("egypt") || yl.contains("مصر")) {
+            return jl.matches(".*(cairo|giza|alex|egypt|mansoura|tanta|ismailia|suez|port said|zagazig|assiut|minya|sohag|luxor|aswan"
+                    + "|hurghada|sharm|damietta|beni suef|fayoum|monufia|sharqia|qalyubia|gharbia|beheira|kafr|october|sheikh zayed"
+                    + "|new capital|10th of ramadan|obour|shorouk|maadi|nasr city|heliopolis|القاهرة|الجيزة|مصر).*");
+        }
+        return false;
     }
 
     private static void pause() {
@@ -195,7 +227,7 @@ public final class Feed {
 
     // ------------------------------------------------------------------ Wuzzuf: its search API (JSON:API)
     static List<Map<String, Object>> wuzzuf(String title) throws IOException {
-        String body = Json.stringify(Json.obj("startIndex", 0, "pageSize", 15, "longitude", "0", "latitude", "0",
+        String body = Json.stringify(Json.obj("startIndex", 0, "pageSize", 30, "longitude", "0", "latitude", "0",
                 "query", title, "searchFilters", Json.obj(), "sortBy", "date"));
         Map<String, Object> search = Json.map(Json.tryParse(post("https://wuzzuf.net/api/search/job", body)));
         List<String> ids = new ArrayList<String>();
