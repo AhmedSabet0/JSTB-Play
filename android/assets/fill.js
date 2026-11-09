@@ -256,6 +256,29 @@
     return false;
   }
 
+  // A radio or checkbox drawn by the site (the input itself hidden) counts when its label shows.
+  function shownByLabel(el) {
+    var lab = el.closest('label');
+    if (!lab && el.id) {
+      try { lab = document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]'); } catch (e) { lab = null; }
+    }
+    return !!(lab && visible(lab));
+  }
+  // A drop-down the site builds itself (role="combobox"): typing filters it, then the matching option is picked.
+  function isCombo(el) {
+    return el.getAttribute('role') === 'combobox' || !!el.getAttribute('aria-autocomplete')
+      || (el.getAttribute('aria-haspopup') || '') === 'listbox';
+  }
+  function pickOption(el, want, tries) {
+    var box = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+    var scope = (box && document.getElementById(box)) || document;
+    var opts = Array.prototype.filter.call(scope.querySelectorAll('[role="option"]'), visible);
+    var hit = opts.filter(function (o) { return same(textOf(o), want); })[0]
+      || opts.filter(function (o) { return textOf(o).toLowerCase().indexOf(String(want).toLowerCase()) >= 0; })[0];
+    if (hit) { clickElement(hit); mark(el.closest('[class*="select" i], [class*="control" i]') || el); return; }
+    if (tries > 0) setTimeout(function () { pickOption(el, want, tries - 1); }, 250);
+  }
+
   var fields = [];
   function collect() {
     ensureResumeSelected();
@@ -266,7 +289,8 @@
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
       var type = (el.getAttribute('type') || el.tagName).toLowerCase();
-      if (el.disabled || el.readOnly || SKIP.test(type) || !visible(el)) continue;
+      if (el.disabled || el.readOnly || SKIP.test(type)) continue;
+      if (!visible(el) && !((type === 'radio' || type === 'checkbox') && shownByLabel(el))) continue;
       if (isResumeRadio(el)) {
         continue;
       }
@@ -289,6 +313,16 @@
       }
       var lbl = rawLabel || labelOf(el);
       var isNum = isNumericInput(el, lbl);
+      if (el.tagName === 'INPUT' && isCombo(el)) {
+        var lb = el.getAttribute('aria-controls') && document.getElementById(el.getAttribute('aria-controls'));
+        var copts = lb ? Array.prototype.map.call(lb.querySelectorAll('[role="option"]'), textOf).filter(Boolean) : [];
+        var cf = { key: 'f' + fields.length, label: lbl, kind: copts.length ? 'select' : 'text', options: copts,
+          value: String(el.value || ''), placeholder: clean(el.getAttribute('placeholder') || ''), maxlength: 0,
+          required: isRequired(el, lbl), combo: true };
+        fields.push({ f: cf, els: [el] });
+        out.push(cf);
+        continue;
+      }
       var f = {
         key: 'f' + fields.length,
         label: lbl,
@@ -337,7 +371,7 @@
     if (desc && desc.set) desc.set.call(el, str); else el.value = str;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    el.dispatchEvent(new Event('blur', { bubbles: true }));
+    if (!isCombo(el)) el.dispatchEvent(new Event('blur', { bubbles: true }));
   }
   function same(a, b) {
     a = clean(a).toLowerCase();
@@ -357,6 +391,15 @@
       if (v === undefined || v === null) return;
       var f = item.f;
       var el = item.els[0];
+      if (f.combo) {
+        var want0 = Array.isArray(v) ? v[0] : v;
+        try { el.focus(); } catch (e) { /* not focusable */ }
+        setValue(el, String(want0));
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+        pickOption(el, want0, 6);
+        n++;
+        return;
+      }
       if (f.kind === 'select') {
         var want = Array.isArray(v) ? v[0] : v;
         for (var i = 0; i < el.options.length; i++) {
@@ -373,7 +416,8 @@
         var hit = false;
         item.els.forEach(function (r) {
           if (wants.some(function (w) { return same(optionLabel(r), w); }) && !r.checked) {
-            r.click();
+            if (visible(r)) r.click();
+            else { var lab = r.closest('label') || (r.id && document.querySelector('label[for="' + r.id + '"]')); (lab || r).click(); }
             hit = true;
           }
         });
@@ -387,7 +431,7 @@
       }
     });
     try {
-      if (document.activeElement && document.activeElement.blur) {
+      if (document.activeElement && document.activeElement.blur && !isCombo(document.activeElement)) {
         document.activeElement.blur();
       }
     } catch (e) {}
@@ -421,7 +465,7 @@
   // ---------------------------------------------------------------- Fill and review
   // The site's own "Apply" button, when the job page shows the form only after it. Never a "Submit" button, and never
   // "Apply with LinkedIn / Indeed / Google" (those are other sites' sign-ins).
-  var START = /^(easy apply( on linkedin)?|apply( now| for (this|the|a)? (job|position|role))?|start (your )?application|apply here|i'?m interested|apply online|تقدم للوظيفة|قدم الآن|التقديم للوظيفة)$/i;
+  var START = /^(easy apply( on linkedin)?|apply( now| for( (this|the|a))? (job|position|role|this position))?|apply to (this )?job|start (your )?application|apply here|i'?m interested|apply online|تقدم للوظيفة|قدم الآن|التقديم للوظيفة|قدّم الآن)$/i;
   var OTHER = /indeed|facebook|seek|glassdoor|resume ?parse|upload resume to autofill/i;
   function labelText(el) {
     return clean(el.innerText || el.value || el.getAttribute('aria-label') || '');
@@ -609,7 +653,7 @@
   }
 
   // The site's "thank you" after you sent it: the app marks the job Applied.
-  var THANKS = /thank(s| you) for (applying|your application)|application (has been |was )?(received|submitted|sent)|we('ve| have) received your application|successfully (submitted|applied)|your application is (complete|in)|applied to|application sent|easy apply submitted|تم إرسال طلبك|تم التقديم بنجاح/i;
+  var THANKS = /thank(s| you) for (applying|your application)|application (has been |was )?(received|submitted|sent)|we('ve| have) received your application|successfully (submitted|applied)|your application is (complete|in)|applied to|application sent|easy apply submitted|you('ve| have) (successfully )?applied|application (was )?successful|تم إرسال طلبك|تم التقديم بنجاح|تم تقديم طلبك/i;
   function done() {
     var modal = document.querySelector('.jobs-easy-apply-modal, [role="dialog"], .artdeco-modal');
     var modalText = modal ? clean(modal.innerText) : '';

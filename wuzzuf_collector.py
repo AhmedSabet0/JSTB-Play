@@ -73,6 +73,18 @@ def clean_text(html: Optional[str]) -> str:
     return " ".join(t.split()).strip()
 
 
+def job_url(uri: str) -> str:
+    """The job's page. Wuzzuf's API gives "jobs/p/<code>-<title>" (no leading slash); joining it under /jobs/p/ again made
+    /jobs/p/jobs/p/..., a page that does not exist (404)."""
+    u = (uri or "").strip()
+    if not u:
+        return ""
+    if not u.startswith("http"):
+        u = u.lstrip("/")
+        u = f"{BASE}/" + (u if u.startswith("jobs/p/") else f"jobs/p/{u}")
+    return re.sub(r"(/jobs/p)+/jobs/p/", "/jobs/p/", u)
+
+
 def extract_code(url: str) -> str:
     m = re.search(r"/jobs/p/([A-Za-z0-9_-]+)", url)
     if m:
@@ -224,7 +236,7 @@ class WuzzufFetcher:
             uri = a.get("uri") or a.get("slug") or ""
             if not uri:
                 continue
-            url = f"{BASE}/jobs/p/{uri}" if not uri.startswith("http") and not uri.startswith("/") else (f"{BASE}{uri}" if uri.startswith("/") else uri)
+            url = job_url(uri)
             code = extract_code(url) or job_uuid
             title = clean_text(a.get("title"))
             if not title:

@@ -734,10 +734,11 @@
   // ------------------------------------------------------------------ the setup answers form
   const PF = [
     { k: 'phone', label: 'Mobile number', kind: 'tel', ph: '01012345678', req: true },
-    { k: 'city', label: 'City you live in', kind: 'text', ph: 'Cairo, Egypt' },
+    { k: 'city', label: 'City you live in', kind: 'text', ph: 'Cairo, Egypt', req: true },
     { k: 'graduation_year', label: 'Year you graduated', kind: 'year', ph: '2019', req: true },
     { k: 'expected_salary', label: 'Expected monthly salary', kind: 'money', ph: '30000', req: true },
-    { k: 'current_salary', label: 'Current monthly salary', kind: 'money', ph: '20000' },
+    { k: 'current_salary', label: 'Current monthly salary', kind: 'money', ph: '20000', req: true,
+      help: 'Forms ask both. Put 0 if you are not working now.' },
     { k: 'notice_days', label: 'Notice period', kind: 'days', req: true },
     { k: 'military', label: 'Military service', kind: 'pick', options: ['Completed', 'Exempted', 'Postponed', 'Not applicable'] },
     { k: 'english', label: 'English', kind: 'pick', options: ['Native', 'Fluent', 'Professional', 'Good', 'Basic'] },
@@ -2212,13 +2213,43 @@
   };
   const fmtDay = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '');
   const waiting = () => queue.filter((x) => x.state === 'new');
-  // Best fits first, then the newest.
-  const nextJobs = () => waiting().slice().sort((a, b) => ((typeof b.fit === 'number' ? b.fit : 5) - (typeof a.fit === 'number' ? a.fit : 5))
-    || (b.added - a.added));
+  // When a job was posted: the feed knows; the server says "2 days ago"; a job you shared counts from when you shared it.
+  function postedOf(j) {
+    if (typeof j.posted_at === 'number' && j.posted_at > 0) return j.posted_at;
+    const m = /(\d+)\s*(minute|hour|day|week|month)s?\s+ago/i.exec(String(j.posted_date || ''));
+    if (m) {
+      const unit = { minute: 60, hour: 3600, day: 86400, week: 604800, month: 2592000 }[m[2].toLowerCase()];
+      return Math.min(j.added || Date.now() / 1000, Date.now() / 1000) - Number(m[1]) * unit;
+    }
+    return j.added || 0;
+  }
+  // Days back from today, by the calendar: 0 today, 1 yesterday...
+  function daysAgo(ts) {
+    const d = new Date(ts * 1000);
+    const a = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const now = new Date();
+    const b = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return Math.max(0, Math.round((b - a) / 86400000));
+  }
+  const DAYS = [
+    { k: 'd0', label: 'Today', has: (n) => n === 0 },
+    { k: 'd1', label: 'Yesterday', has: (n) => n === 1 },
+    { k: 'd2', label: '2 days ago', has: (n) => n === 2 },
+    { k: 'd3', label: '3 days ago', has: (n) => n === 3 },
+    { k: 'd4', label: '4 days ago', has: (n) => n === 4 },
+    { k: 'w1', label: '1 week', has: (n) => n >= 5 && n <= 7 },
+    { k: 'old', label: 'Older', has: (n) => n > 7 },
+  ];
+  const dayOf = (j) => { const n = daysAgo(postedOf(j)); return (DAYS.find((d) => d.has(n)) || DAYS[DAYS.length - 1]).k; };
+  const fitOf = (j) => (typeof j.score === 'number' && j.score > 0 ? j.score / 10 : typeof j.fit === 'number' ? j.fit : 5);
+  // Newest day first; in a day, the best fits first, then the newest.
+  const nextJobs = () => waiting().slice().sort((a, b) => (daysAgo(postedOf(a)) - daysAgo(postedOf(b)))
+    || (fitOf(b) - fitOf(a)) || (postedOf(b) - postedOf(a)));
   const findJob = (id) => queue.find((x) => x.id === id);
   function chanTag(j) {
     if (j.channel === 'linkedin') return '<span class="chan linkedin">LinkedIn</span>';
     if (j.channel === 'auto') return '<span class="chan auto">Auto apply</span>';
+    if (j.channel === 'wuzzuf' || /wuzzuf\.net/.test(j.url || '')) return '<span class="chan wuzzuf">Wuzzuf</span>';
     return '<span class="chan">Company site</span>';
   }
   function tagsHtml(j) {
@@ -2247,19 +2278,22 @@
       rememberJobs();
       searchLinks = d.search_links || [];
       searchWhere = d.location || '';
+      if (d.feed) feed = d.feed;
       paintQueue();
       if (fresh.length) {
         const newest = fresh[0];
-        if (newest) {
-          showPopupPill({
-            type: 'job',
-            icon: '💼',
-            title: 'New Matching Job',
-            sub: (newest.title || 'Job') + (newest.company ? ' • ' + newest.company : ''),
-            actText: 'View',
-            onAct: () => { go('queue'); openSheet(newest.id); }
-          });
-        }
+        const many = fresh.length > 1;
+        showPopupPill({
+          type: 'job',
+          icon: '💼',
+          title: many ? `${fresh.length} new jobs for you` : 'New matching job',
+          sub: many ? fresh.slice(0, 2).map((x) => x.title).join(' • ') : (newest.title || 'Job') + (newest.company ? ' • ' + newest.company : ''),
+          actText: 'View',
+          onAct: () => {
+            go('queue');
+            if (many) { qFilter = ''; renderQueue(); } else openSheet(newest.id);
+          }
+        });
       }
     } catch (e) { if (!quiet) toast(e.message, true); }
   }
@@ -2355,31 +2389,76 @@
     $(i).addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addJob($(i)); } });
   });
 
-  let qFilter = store('aa-queue-filter') === 'skipped' ? 'skipped' : 'new';
+  // The Jobs tab: one tab per day (Today, Yesterday, 2, 3, 4 days ago, 1 week, Older), and Skipped.
+  let qFilter = '';   // '' until you pick: the newest day that has jobs
   function renderQueue() {
+    const list = nextJobs();
     const skipped = queue.filter((x) => x.state === 'skipped');
-    $('qf-new').textContent = waiting().length || '';
-    $('qf-skipped').textContent = skipped.length || '';
-    document.querySelectorAll('[data-qf]').forEach((b) => {
-      b.classList.toggle('on', b.dataset.qf === qFilter);
-      b.setAttribute('aria-selected', b.dataset.qf === qFilter ? 'true' : 'false');
-    });
-    const list = qFilter === 'new' ? nextJobs() : skipped;
-    $('queue-list').innerHTML = list.map((j) => `<li class="jcard"><button type="button" data-id="${esc(j.id)}"><span class="jc-title">${
-      esc(j.title)}</span><span class="jc-co">${esc(j.company || hostOf(j.url))}</span><span class="tags">${tagsHtml(j)}<span class="when">${
-      esc(ago(j.added))}</span></span></button></li>`).join('');
+    const counts = {};
+    list.forEach((j) => { const k = dayOf(j); counts[k] = (counts[k] || 0) + 1; });
+    if (!qFilter || (qFilter !== 'skipped' && !counts[qFilter] && qFilter !== 'd0')) {
+      qFilter = (DAYS.find((d) => counts[d.k]) || DAYS[0]).k;
+    }
+    const tabs = DAYS.filter((d) => counts[d.k] || d.k === 'd0')
+      .map((d) => `<button type="button" role="tab" data-day="${d.k}" class="${qFilter === d.k ? 'on' : ''}" aria-selected="${qFilter === d.k}">${
+        d.label}<b>${counts[d.k] || 0}</b></button>`).join('')
+      + (skipped.length ? `<button type="button" role="tab" data-day="skipped" class="ghost${qFilter === 'skipped' ? ' on' : ''}" aria-selected="${
+        qFilter === 'skipped'}">Skipped<b>${skipped.length}</b></button>` : '');
+    const box = $('day-tabs');
+    if (box.dataset.sig !== tabs) {
+      box.dataset.sig = tabs;
+      box.innerHTML = tabs;
+      box.querySelectorAll('[data-day]').forEach((b) => b.addEventListener('click', () => {
+        qFilter = b.dataset.day;
+        renderQueue();
+        b.scrollIntoView({ block: 'nearest', inline: 'center', behavior: calm() ? 'auto' : 'smooth' });
+      }));
+    }
+    const shown = qFilter === 'skipped' ? skipped : list.filter((j) => dayOf(j) === qFilter);
+    $('queue-list').innerHTML = shown.map((j) => `<li class="jcard"><button type="button" data-id="${esc(j.id)}"><span class="jc-title">${
+      esc(j.title)}</span><span class="jc-co">${esc(j.company || hostOf(j.url))}${j.location ? ` · ${esc(j.location)}` : ''}</span><span class="tags">${
+      tagsHtml(j)}<span class="when">${esc(ago(postedOf(j)))}</span></span></button></li>`).join('');
     $('queue-list').querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', () => openSheet(b.dataset.id)));
-    $('queue-empty').hidden = list.length > 0;
-    $('queue-empty-title').textContent = qFilter === 'new' ? 'No jobs waiting' : 'Nothing skipped';
-    $('queue-empty-text').textContent = qFilter === 'new'
-      ? 'Find jobs from the Home screen. On a job you like, tap Share and pick JSTB.'
-      : 'Jobs you skip wait here, in case you change your mind.';
+    $('queue-empty').hidden = shown.length > 0;
+    $('queue-empty-title').textContent = qFilter === 'skipped' ? 'Nothing skipped' : qFilter === 'd0' ? 'No new jobs yet today' : 'No jobs';
+    $('queue-empty-text').textContent = qFilter === 'skipped' ? 'Jobs you skip wait here, in case you change your mind.'
+      : 'New jobs for your job titles come in from LinkedIn and Wuzzuf every hour. Tap Refresh to look now.';
+    renderFeedLine();
   }
-  document.querySelectorAll('[data-qf]').forEach((b) => b.addEventListener('click', () => {
-    qFilter = b.dataset.qf;
-    store('aa-queue-filter', qFilter);
-    renderQueue();
-  }));
+
+  // "Updated 5 min ago" and Refresh: the hourly look at LinkedIn and Wuzzuf.
+  let feed = null;
+  function renderFeedLine() {
+    const f = feed || (state && state.feed) || {};
+    const busy = !!f.running || feedAsked;
+    $('feed-dot').className = `feed-dot${busy ? ' busy' : f.error ? ' bad' : ''}`;
+    $('feed-state').textContent = busy ? 'Looking for new jobs on LinkedIn and Wuzzuf…'
+      : f.error ? `Could not update: ${f.error}`
+        : f.at ? `Updated ${agoText(f.at)}${f.added ? `, ${plural(f.added, 'new job')}` : ''}. Next in about an hour.`
+          : 'New jobs from LinkedIn and Wuzzuf every hour';
+    $('feed-refresh').disabled = busy;
+    $('feed-refresh').textContent = busy ? 'Updating…' : 'Refresh';
+  }
+  let feedAsked = false;
+  let feedWatch = null;
+  $('feed-refresh').addEventListener('click', async () => {
+    try {
+      const r = await api('/api/feed', {});
+      feed = r.feed;
+      feedAsked = true;
+      renderFeedLine();
+      clearInterval(feedWatch);
+      feedWatch = setInterval(async () => {   // until the round is done: then the new jobs show
+        await loadQueue(true, { noPill: true });
+        if (!feed || !feed.running) {
+          clearInterval(feedWatch);
+          feedAsked = false;
+          renderQueue();
+          if (feed && !feed.error) toast(feed.added ? `${plural(feed.added, 'new job')} added.` : 'No new jobs since the last look.');
+        }
+      }, 2500);
+    } catch (e) { toast(e.message, true); }
+  });
 
   // ------------------------------------------------------------------ the job sheet
   let sheetId = null;

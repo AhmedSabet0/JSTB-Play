@@ -52,6 +52,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.util.HashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -146,6 +147,7 @@ public final class MainActivity extends Activity {
         }
         dash.loadUrl("https://" + ASSET_HOST + "/ui/index.html");
         handle(getIntent());
+        FeedJob.schedule(this);   // new jobs about every hour, with the app closed too
     }
 
     private int barColor() {
@@ -549,6 +551,9 @@ public final class MainActivity extends Activity {
                     bridgePool.execute(new Runnable() {
                         @Override
                         public void run() {
+                            if (googleNative(accountName)) {
+                                return;   // signed in without leaving the app
+                            }
                             try {
                                 String url = platform.engine.account.googleStart();
                                 if (url != null && !url.isEmpty()) {
@@ -570,6 +575,50 @@ public final class MainActivity extends Activity {
             }
             js("window.aaGoogle && window.aaGoogle(JSON.stringify({ok:false, error:'Sign-in cancelled'}))");
         }
+    }
+
+    /** Sign in with Google like other apps: the account picked on this phone asks Google (Google's own consent sheet,
+     *  no browser) for a one-time code for the server (it connects Google Drive too), or else an ID token. False when
+     *  that is not possible here (no Google Play services, the server has no client ID...): then the browser page. */
+    private boolean googleNative(String accountName) {
+        String clientId = platform.engine.account.googleClientId();
+        if (clientId.isEmpty()) {
+            return false;
+        }
+        android.accounts.Account acct = new android.accounts.Account(accountName, "com.google");
+        AccountManager am = AccountManager.get(this);
+        String[] kinds = {
+            "oauth2:server:client_id:" + clientId + ":api_scope:openid email profile https://www.googleapis.com/auth/drive.file",
+            "audience:server:client_id:" + clientId,
+        };
+        for (int k = 0; k < kinds.length; k++) {
+            String token = null;
+            try {
+                Bundle b = am.getAuthToken(acct, kinds[k], null, this, null, null).getResult(90, java.util.concurrent.TimeUnit.SECONDS);
+                token = b.getString(AccountManager.KEY_AUTHTOKEN);
+            } catch (android.accounts.OperationCanceledException e) {
+                js("window.aaGoogle && window.aaGoogle(JSON.stringify({ok:false, error:'Sign-in cancelled'}))");
+                return true;   // you said no on Google's sheet: nothing more to do
+            } catch (Exception e) {
+                Util.log("Google sign-in in the app: " + Util.shortError(e, 100) + (k == 0 ? "; trying an ID token" : "; using the browser"));
+            }
+            if (token == null || token.isEmpty()) {
+                continue;
+            }
+            am.invalidateAuthToken("com.google", token);   // one use only: the next sign-in gets a new one
+            String r = platform.api.handle("/api/account/google-native", Json.stringify(k == 0
+                    ? Json.obj("code", token) : Json.obj("id_token", token)));
+            if (Boolean.FALSE.equals(Json.map(Json.tryParse(r)).get("ok")) && k == 0) {
+                Util.log("The server did not take the Google code: " + Json.str(Json.map(Json.tryParse(r)), "error"));
+                continue;   // an older server: try the ID token
+            }
+            if (Boolean.FALSE.equals(Json.map(Json.tryParse(r)).get("ok"))) {
+                return false;   // the server cannot do it: the browser page
+            }
+            js("window.aaGoogle && window.aaGoogle(" + Json.stringify(r) + ")");
+            return true;
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ panes
@@ -954,6 +1003,7 @@ public final class MainActivity extends Activity {
     }
 
     void showBrowser(String url, String jobId, String title, boolean auto) {
+        askedSkipped.clear();   // a new job: its questions are new
         closePanes();
         browserJob = jobId == null ? "" : jobId;
         browserJobTitle = title == null ? "" : title;
@@ -1452,10 +1502,29 @@ public final class MainActivity extends Activity {
                                             return;
                                         }
                                         final List<Object> skipped = Json.arr(r.get("skipped"));
+                                        final List<Map<String, Object>> toAsk = new ArrayList<Map<String, Object>>();
+                                        for (Object q : Json.arr(r.get("ask"))) {
+                                            Map<String, Object> qm = Json.map(q);
+                                            if (!askedSkipped.contains(Json.str(qm, "label"))) {
+                                                toAsk.add(qm);
+                                            }
+                                        }
                                         web.evaluateJavascript("window.AAFill.apply(" + Json.stringify(r.get("answers")) + ")",
                                                 new ValueCallback<String>() {
                                                     @Override
                                                     public void onReceiveValue(String n) {
+                                                        if (!toAsk.isEmpty() && web == browserWeb && !destroyed) {
+                                                            fillDone();
+                                                            askQuestions(web, toAsk, 0, new Runnable() {
+                                                                @Override
+                                                                public void run() {
+                                                                    if (web == browserWeb && !destroyed) {
+                                                                        fillForm();   // the answers are in: on to the next step
+                                                                    }
+                                                                }
+                                                            });
+                                                            return;
+                                                        }
                                                         try {
                                                             fillDone();
                                                             final int filled = (int) Json.num(Json.obj("n", Json.tryParse(n)), "n", 0);
@@ -1567,6 +1636,116 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    /** Questions a form asks that your answers, your info and the AI do not know (for sure). */
+    private final java.util.Set<String> askedSkipped = new java.util.HashSet<String>();
+
+    /** Asks you one question after the other in the app's own window: your answer goes into the form and into your
+     *  info, so the next form that asks it is filled by itself. Skip leaves it for you on the page. */
+    private void askQuestions(final WebView web, final List<Map<String, Object>> qs, final int i, final Runnable done) {
+        if (i >= qs.size() || web != browserWeb || destroyed) {
+            done.run();
+            return;
+        }
+        final Map<String, Object> q = qs.get(i);
+        final String label = Json.str(q, "label");
+        final String kind = Json.str(q, "kind");
+        final List<String> options = Json.strings(q.get("options"));
+        final String suggestion = Json.str(q, "suggestion");
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(22), dp(8), dp(22), 0);
+        TextView qText = new TextView(this);
+        qText.setText(label);
+        qText.setTextSize(17);
+        qText.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(qText);
+        TextView hint = new TextView(this);
+        hint.setText(suggestion.isEmpty() ? "Answer once: it is saved, and forms that ask it again are filled by themselves."
+                : "Suggested from your CV. Check it: your answer is saved for next time.");
+        hint.setTextSize(13);
+        hint.setPadding(0, dp(4), 0, dp(10));
+        box.addView(hint);
+        final android.widget.EditText input = new android.widget.EditText(this);
+        final int[] picked = {-1};
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle(qs.size() > 1 ? "Question " + (i + 1) + " of " + qs.size() : "The form asks")
+                .setCancelable(false);
+        if (!options.isEmpty()) {
+            for (int k = 0; k < options.size(); k++) {
+                if (options.get(k).equalsIgnoreCase(suggestion)) {
+                    picked[0] = k;
+                }
+            }
+            b.setSingleChoiceItems(options.toArray(new String[0]), picked[0], new android.content.DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(android.content.DialogInterface d, int which) {
+                    picked[0] = which;
+                }
+            });
+        } else {
+            boolean num = "number".equals(kind);
+            input.setInputType(num ? (android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL)
+                    : "textarea".equals(kind) ? (android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+                    | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES) : (android.text.InputType.TYPE_CLASS_TEXT
+                    | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES));
+            input.setHint(num ? "A number, like 3" : "Your answer");
+            input.setText(suggestion);
+            input.setSelection(input.getText().length());
+            box.addView(input);
+        }
+        b.setView(box);
+        b.setPositiveButton(i + 1 < qs.size() ? "Save, next" : "Save and fill", null);
+        b.setNegativeButton("Skip", new android.content.DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(android.content.DialogInterface d, int which) {
+                askedSkipped.add(label);   // not again on this page: you answer it on the site
+                askQuestions(web, qs, i + 1, done);
+            }
+        });
+        final AlertDialog dialog = b.create();
+        dialog.setOnShowListener(new android.content.DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(android.content.DialogInterface di) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        final String answer = options.isEmpty() ? input.getText().toString().trim()
+                                : picked[0] >= 0 ? options.get(picked[0]) : "";
+                        if (answer.isEmpty()) {
+                            Toast.makeText(MainActivity.this, options.isEmpty() ? "Type an answer, or tap Skip."
+                                    : "Pick an answer, or tap Skip.", Toast.LENGTH_SHORT).show();
+                            return;
+                        }
+                        dialog.dismiss();
+                        bridgePool.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                final Map<String, Object> r = Json.map(Json.tryParse(platform.api.handle("/api/fill/learn",
+                                        Json.stringify(Json.obj("label", label, "value", answer, "kind", kind)))));
+                                platform.main.post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        Object v = Boolean.FALSE.equals(r.get("ok")) ? answer : r.get("value");
+                                        if (web == browserWeb && !destroyed) {
+                                            web.evaluateJavascript("window.AAFill && window.AAFill.apply(" + Json.stringify(
+                                                    Json.obj(Json.str(q, "key"), v)) + ")", null);
+                                        }
+                                        askQuestions(web, qs, i + 1, done);
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+                if (options.isEmpty()) {
+                    input.requestFocus();
+                    dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+                }
+            }
+        });
+        dialog.show();
     }
 
     private void fillDone() {

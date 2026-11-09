@@ -818,3 +818,25 @@ body.tabs .toast { bottom: calc(92px + env(safe-area-inset-bottom)); }
 .site-icon.wz { background: #0055d9; color: #fff; }
 .site-icon.g { background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); }
 .step[data-step="sites"] .site-row { padding: 16px; }
+
+/* ---------- Jobs: fresh from LinkedIn and Wuzzuf, by day */
+.feed-line { display: flex; align-items: center; gap: 8px; padding: 2px 2px 0; }
+.feed-state { flex: 1; min-width: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.35; }
+.feed-line .linklike { flex: none; font-size: 14px; }
+.feed-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--sent); }
+.feed-dot.busy { background: var(--action); animation: pulse 1.4s infinite; box-shadow: 0 0 0 0 color-mix(in srgb, var(--action) 50%, transparent); }
+.feed-dot.bad { background: var(--ask); }
+.day-tabs { display: flex; gap: 8px; overflow-x: auto; margin: 0 -16px; padding: 2px 16px 4px; scrollbar-width: none;
+  scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+.day-tabs::-webkit-scrollbar { display: none; }
+.day-tabs button { flex: none; display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit;
+  font-size: 14.5px; font-weight: 650; scroll-snap-align: start; cursor: pointer; transition: background .15s, border-color .15s; }
+.day-tabs button b { min-width: 22px; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2);
+  font-size: 12.5px; text-align: center; font-variant-numeric: tabular-nums; }
+.day-tabs button.on { border-color: var(--action); background: var(--action); color: var(--action-ink); }
+.day-tabs button.on b { background: rgba(255, 255, 255, .22); color: inherit; }
+.day-tabs button.ghost:not(.on) { color: var(--ink-2); }
+.chan.wuzzuf { background: #e6edff; color: #0040b8; }
+@media (prefers-color-scheme: dark) { .chan.wuzzuf { background: #17264d; color: #9db7ff; } }
+.queue-paste-hint { margin: 10px 0 -4px; }

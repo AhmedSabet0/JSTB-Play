@@ -104,7 +104,7 @@
 
     <div class="step" data-step="answers">
       <h1>Answers forms ask for</h1>
-      <p class="lead">Most application forms ask these. Answer once and the app uses them in every form.</p>
+      <p class="lead">Most application forms ask these. Answer once and the app uses them in every form. A question a form asks later that is not here is asked once, then saved too.</p>
       <p id="w-sug-state" class="note" hidden></p>
       <div id="w-answers" class="pform"></div>
     </div>
@@ -336,20 +336,23 @@
 
   <!-- ============================================================ JOBS (to apply) -->
   <section id="v-queue" class="view" hidden>
-    <div class="row paste">
-      <input id="queue-link" type="url" inputmode="url" placeholder="Paste a job link" autocomplete="off" spellcheck="false">
-      <button id="queue-link-btn" class="btn primary" type="button">Add</button>
+    <div class="feed-line">
+      <span class="feed-dot" id="feed-dot" aria-hidden="true"></span>
+      <span id="feed-state" class="feed-state">New jobs from LinkedIn and Wuzzuf every hour</span>
+      <button id="feed-refresh" class="linklike" type="button">Refresh</button>
     </div>
-    <div class="filter-tabs" role="tablist" aria-label="Show">
-      <button type="button" role="tab" data-qf="new" class="on">To apply <b id="qf-new"></b></button>
-      <button type="button" role="tab" data-qf="skipped">Skipped <b id="qf-skipped"></b></button>
-    </div>
+    <div class="day-tabs" id="day-tabs" role="tablist" aria-label="Posted"></div>
     <ul id="queue-list" class="cards"></ul>
     <div id="queue-empty" class="empty-state" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 16v-1H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4h-7v1h-4zm10-9h-4V5l-2-2h-4L8 5v2H4a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h6v-2h4v2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm-6 0h-4V5h4v2z"/></svg>
       <b id="queue-empty-title">No jobs waiting</b>
       <span id="queue-empty-text">Find jobs from the Home screen. On a job you like, tap Share and pick JSTB.</span>
       <button class="btn primary" data-go="home" type="button">Find jobs</button>
+    </div>
+    <p class="hint queue-paste-hint">Found a job somewhere else? Paste its link:</p>
+    <div class="row paste">
+      <input id="queue-link" type="url" inputmode="url" placeholder="Paste a job link" autocomplete="off" spellcheck="false">
+      <button id="queue-link-btn" class="btn" type="button">Add</button>
     </div>
   </section>
 

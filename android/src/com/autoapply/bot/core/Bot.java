@@ -79,6 +79,8 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
     public final Ai ai;
     public final String cvText;
     public boolean neverAsk = false;
+    /** resolve() answers only from what is known (your answers, setup answers, your info), never with the AI. */
+    public boolean knownOnly = false;
     public int perHour = 10;
     public int perDay = 30;
     public int minScore = 6;
@@ -129,6 +131,9 @@ public final class Bot implements LinkedIn.Resolver, LinkedIn.Hooks {
         Object fact = fromFacts(question, kind, options, rejected);
         if (fact != null) {
             return fact;
+        }
+        if (knownOnly) {
+            return null;   // the caller asks the AI itself (with how sure it is), or you
         }
         Object ans = ai.answer(question, kind, options, store.knownForAi(), jobLabel(), hint, placeholder, rejected, maxlen);
         if (ans != null) {

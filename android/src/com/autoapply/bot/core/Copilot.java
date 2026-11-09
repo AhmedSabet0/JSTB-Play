@@ -29,11 +29,83 @@ public final class Copilot {
     Copilot(Engine engine, File dir) {
         this.engine = engine;
         this.file = new File(dir, "copilot.json");
+        boolean fixed = false;
         for (Object o : Json.arr(Json.map(Json.tryParse(Util.readText(file))).get("items"))) {
             if (o instanceof Map) {
-                items.add(Json.map(o));
+                Map<String, Object> it = Json.map(o);
+                fixed |= repair(it);
+                items.add(it);
             }
         }
+        if (fixed) {
+            save();
+        }
+    }
+
+    /** Wuzzuf links saved as /jobs/p/jobs/p/... (a page that does not exist) get their right address. */
+    static boolean repair(Map<String, Object> it) {
+        String url = Json.str(it, "url");
+        if (url.contains("wuzzuf.net") && url.contains("/jobs/p/jobs/p/")) {
+            it.put("url", Feed.wuzzufUrl(url));
+            if (!"wuzzuf".equals(Json.str(it, "channel")) && !"linkedin".equals(Json.str(it, "channel"))) {
+                it.put("channel", "wuzzuf");
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // ------------------------------------------------------------------ jobs the feed found (LinkedIn, Wuzzuf)
+    /** Adds the jobs not in the list yet (by ID or link); a job already there gets its posting time. Untouched jobs from
+     *  the feed or the server posted before `oldest` leave. Returns how many were added. */
+    public synchronized int addFound(List<Map<String, Object>> found, double oldest) {
+        java.util.Set<String> ids = new java.util.HashSet<String>();
+        java.util.Set<String> urls = new java.util.HashSet<String>();
+        Map<String, Map<String, Object>> byId = new LinkedHashMap<String, Map<String, Object>>();
+        for (Map<String, Object> it : items) {
+            ids.add(Json.str(it, "id"));
+            urls.add(Json.str(it, "url"));
+            byId.put(Json.str(it, "id"), it);
+        }
+        int added = 0;
+        double now = Util.now();
+        List<Map<String, Object>> fresh = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> j : found) {
+            String id = Json.str(j, "id");
+            Map<String, Object> have = byId.get(id);
+            if (have != null) {
+                if (!have.containsKey("posted_at") && j.containsKey("posted_at")) {
+                    have.put("posted_at", j.get("posted_at"));
+                }
+                continue;
+            }
+            if (ids.contains(id) || urls.contains(Json.str(j, "url")) || Json.dbl(j, "posted_at", now) < oldest) {
+                continue;
+            }
+            Map<String, Object> it = new LinkedHashMap<String, Object>(j);
+            it.put("added", now);
+            it.put("state", "new");
+            it.put("stage", "");
+            it.put("why", "");
+            fresh.add(it);
+            ids.add(id);
+            urls.add(Json.str(j, "url"));
+            added++;
+        }
+        items.addAll(0, fresh);
+        // Old jobs you never touched leave, so the list stays about the last two weeks.
+        for (int i = items.size() - 1; i >= 0; i--) {
+            Map<String, Object> it = items.get(i);
+            String src = Json.str(it, "source");
+            boolean auto = "feed".equals(src) || "server_match".equals(src);
+            double when = Json.dbl(it, "posted_at", Json.dbl(it, "added", now));
+            if (auto && "new".equals(Json.str(it, "state")) && when < oldest && Json.str(it, "note").isEmpty()
+                    && Json.str(it, "letter").isEmpty()) {
+                items.remove(i);
+            }
+        }
+        save();
+        return added;
     }
 
     private void save() {
@@ -72,7 +144,13 @@ public final class Copilot {
         String plain = url.replaceAll("#.*$", "")
                 .replaceAll("([?&])(utm_[a-z]+|gh_src|source|ref|trk|refId|trackingId)=[^&]*", "$1")
                 .replaceAll("\\?&+", "?").replaceAll("&{2,}", "&").replaceAll("[?&]+$", "");
-        boolean onLinkedIn = plain.toLowerCase(Locale.ROOT).contains("linkedin.com");
+        String low = plain.toLowerCase(Locale.ROOT);
+        if (low.contains("wuzzuf.net/jobs/p/")) {   // a Wuzzuf job: the same ID as the feed gives it
+            String u = Feed.wuzzufUrl(plain.replaceAll("\\?.*$", ""));
+            Matcher code = Pattern.compile("/jobs/p/([A-Za-z0-9]+)").matcher(u);
+            return Json.obj("url", u, "id", "wz:" + (code.find() ? code.group(1) : hash(u)), "channel", "wuzzuf");
+        }
+        boolean onLinkedIn = low.contains("linkedin.com");
         return Json.obj("url", plain, "id", (onLinkedIn ? "li:" : "c:") + hash(plain), "channel", onLinkedIn ? "linkedin" : "company");
     }
 
@@ -227,6 +305,7 @@ public final class Copilot {
         for (Map.Entry<String, Map<String, Object>> e : upserts.entrySet()) {
             Map<String, Object> it = new LinkedHashMap<String, Object>(e.getValue());
             it.put("id", e.getKey());
+            repair(it);
             int at = -1;
             for (int i = 0; i < items.size(); i++) {
                 if (e.getKey().equals(Json.str(items.get(i), "id"))) {

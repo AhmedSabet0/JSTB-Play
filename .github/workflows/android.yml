@@ -115,6 +115,13 @@ jobs:
           cp out/JSTB.apk "../dist/JSTB-play-universal.apk"
           rm -f keystore/autoapply.jks
 
+      - name: Job feed check (asks the real LinkedIn and Wuzzuf like the phone does)
+        continue-on-error: true   # the sites being busy must not stop a build
+        run: |
+          mkdir -p out/feed
+          javac --release 8 -Xlint:-options -nowarn -d out/feed src/com/autoapply/bot/core/*.java test/FeedCheck.java
+          java -cp out/feed com.autoapply.bot.core.FeedCheck
+
       - name: Build the development APK (updates itself from GitHub releases)
         env:
           KS_PASS: ${{ secrets.DEV_KS_PASS || secrets.KS_PASS || 'autoapply' }}

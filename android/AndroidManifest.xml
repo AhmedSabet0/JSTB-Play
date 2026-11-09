@@ -57,6 +57,12 @@
 
         <receiver android:name=".app.ActionReceiver" android:exported="false" />
 
+        <!-- About every hour: new jobs from LinkedIn and Wuzzuf, with the app closed too. -->
+        <service
+            android:name=".app.FeedJob"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+
         <provider
             android:name=".app.FilesProvider"
             android:authorities="com.autoapply.bot.files"

@@ -85,6 +85,8 @@ async def fetch_linkedin_guest_jobs(
             params = {
                 "keywords": keywords,
                 "location": location,
+                "f_TPR": "r604800",   # posted within the last week
+                "sortBy": "DD",       # newest first (without it LinkedIn returns its "relevant" jobs, often weeks old)
                 "start": start,
             }
             try:
@@ -126,6 +128,14 @@ async def fetch_linkedin_guest_jobs(
                 company = company_tag.get_text(strip=True) if company_tag else ""
                 job_loc = location_tag.get_text(strip=True) if location_tag else location
                 posted_date = time_tag.get_text(strip=True) if time_tag else ""
+                posted_at = time.time()
+                if time_tag is not None:   # "3 hours ago" when it says so, else the date it gives (at noon UTC)
+                    m_ago = re.search(r"(\d+)\s*(minute|hour|day|week|month)s?\s+ago", posted_date, re.I)
+                    if m_ago:
+                        unit = {"minute": 60, "hour": 3600, "day": 86400, "week": 604800, "month": 2592000}[m_ago.group(2).lower()]
+                        posted_at = time.time() - int(m_ago.group(1)) * unit
+                    elif re.match(r"\d{4}-\d{2}-\d{2}$", time_tag.get("datetime", "")):
+                        posted_at = min(posted_at, time.mktime(time.strptime(time_tag["datetime"] + " 12", "%Y-%m-%d %H")))
 
                 if not title:
                     continue
@@ -137,6 +147,7 @@ async def fetch_linkedin_guest_jobs(
                     "location": job_loc,
                     "url": url,
                     "posted_date": posted_date,
+                    "posted_at": posted_at,
                     "keywords": keywords,
                     "collected_at": time.time(),
                 })
@@ -538,6 +549,8 @@ async def match_jobs_for_all_users(jobs: List[Dict[str, Any]]) -> int:
                     "location": j.get("location", ""),
                     "posted_date": j.get("posted_date", ""),
                 }
+                if j.get("posted_at"):
+                    copilot_record_data["posted_at"] = j["posted_at"]
                 copilot_changes.append(("copilot", f"li:{job_id}", copilot_record_data, now))
                 matches_created += 1
 

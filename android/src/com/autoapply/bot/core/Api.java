@@ -17,7 +17,7 @@ public final class Api {
     /** Requests that change your data (it then goes to your account). */
     static final java.util.Set<String> CHANGES = new java.util.HashSet<String>(java.util.Arrays.asList("/api/settings",
             "/api/cv", "/api/profile", "/api/facts", "/api/setup", "/api/answers", "/api/answer", "/api/open-questions",
-            "/api/ask-mode", "/api/tracker/stage"));
+            "/api/ask-mode", "/api/tracker/stage", "/api/fill/learn"));
 
     private final Engine engine;
     private final java.io.File updateFile;
@@ -111,7 +111,8 @@ public final class Api {
         }
         if (p.equals("/api/copilot")) {
             Map<String, String> cfg = engine.config.load();
-            return Json.obj("items", engine.copilot.list(), "search_links", engine.copilot.searchLinks(cfg),
+            engine.feed.maybeRun(false);   // about every hour: new jobs from LinkedIn and Wuzzuf
+            return Json.obj("items", engine.copilot.list(), "feed", engine.feed.status(), "search_links", engine.copilot.searchLinks(cfg),
                     "stats", engine.copilot.stats(Util.now()), "location", cfg.get("LOCATION") == null ? "" : cfg.get("LOCATION"));
         }
         if (p.equals("/api/tracker")) {
@@ -171,6 +172,7 @@ public final class Api {
                 "build", engine.platform.buildInfo(),
                 "auto_apply", autoApply(),
                 "copilot", engine.copilot.stats(Util.now()),
+                "feed", engine.feed.status(),
                 "ready", engine.store.idsWithStatus("ready").size(),
                 "approved", engine.store.idsWithStatus("approved").size(),
                 "sync", engine.sync.status(),
@@ -440,6 +442,10 @@ public final class Api {
             int n = "skip".equals(Json.str(b, "op")) ? engine.skipReady(ids) : engine.approve(ids);
             return Json.obj("ok", true, "count", n, "items", engine.ready(), "running", engine.running());
         }
+        if (p.equals("/api/feed")) {   // Refresh on the Jobs tab
+            boolean started = engine.feed.maybeRun(true);
+            return Json.obj("ok", true, "started", started, "feed", engine.feed.status());
+        }
         if (p.equals("/api/sync/now")) {
             if (!engine.account.signedIn()) {
                 throw new IllegalArgumentException("Sign in to your account first.");
@@ -460,6 +466,10 @@ public final class Api {
             Map<String, Object> out = Filler.answers(engine, Json.arr(b.get("fields")), title, company);
             out.put("ok", true);
             return out;
+        }
+        if (p.equals("/api/fill/learn")) {   // your answer to a form's question: kept in your info for every form
+            Object v = Filler.learn(engine, Json.str(b, "label"), b.get("value"), Json.str(b, "kind"));
+            return Json.obj("ok", true, "value", v);
         }
         if (p.equals("/api/tracker/stage")) {
             String id = Json.str(b, "id");
@@ -610,6 +620,18 @@ public final class Api {
     }
 
     private void saveSettings(Map<String, Object> b) {
+        String titlesBefore = engine.config.load().get("KEYWORDS");
+        try {
+            saveSettingsNow(b);
+        } finally {
+            String after = engine.config.load().get("KEYWORDS");
+            if (after != null && !after.equals(titlesBefore)) {
+                engine.feed.maybeRun(true);   // new job titles: their jobs now, not in an hour
+            }
+        }
+    }
+
+    private void saveSettingsNow(Map<String, Object> b) {
         for (String key : SETTINGS_KEYS) {
             if (!b.containsKey(key)) {
                 continue;
@@ -747,6 +769,12 @@ public final class Api {
                 if (info == null) {
                     return Json.obj("ok", true, "pending", true);
                 }
+                Util.log("Signed in with Google as " + Json.str(info, "email") + ".");
+                engine.sync.kick(2);
+                return Json.obj("ok", true, "account", info);
+            }
+            if (what.equals("google-native")) {   // the Google account on the phone, without the browser
+                Map<String, Object> info = acc.googleNative(Json.str(b, "code"), Json.str(b, "id_token"));
                 Util.log("Signed in with Google as " + Json.str(info, "email") + ".");
                 engine.sync.kick(2);
                 return Json.obj("ok", true, "account", info);

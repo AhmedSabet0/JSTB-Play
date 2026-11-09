@@ -232,6 +232,7 @@ public final class Account {
             data.put("contact", Json.str(r, "contact_email"));
             data.put("signups_open", Json.bool(r, "signups_open"));
             data.put("google_signin", Json.bool(r, "google_signin"));
+            data.put("google_client_id", Json.str(r, "google_client_id"));
             data.put("password_signups", !r.containsKey("password_signups") || Json.bool(r, "password_signups"));
             save();
         }
@@ -328,6 +329,35 @@ public final class Account {
                 data.remove("google_verifier");
                 save();
             }
+            signedInAs(r, Json.str(Json.map(r.get("user")), "email"));
+            return info();
+        }
+    }
+
+    /** The server's Google client ID: the phone asks Google (in the app, no browser) for a sign-in meant for it. */
+    public String googleClientId() {
+        synchronized (this) {
+            String id = Json.str(data, "google_client_id");
+            if (!id.isEmpty()) {
+                return id;
+            }
+        }
+        try {
+            serverInfo();
+        } catch (RuntimeException e) {
+            return "";
+        }
+        synchronized (this) {
+            return Json.str(data, "google_client_id");
+        }
+    }
+
+    /** Sign in with Google without the browser: the Google account on this phone gave a one-time code for the server
+     *  (it also connects Google Drive) or an ID token; the server checks it with Google and opens a session. */
+    public Map<String, Object> googleNative(String code, String idToken) {
+        synchronized (googleLock) {
+            Map<String, Object> r = call("POST", "/v1/auth/google/native", Json.obj("code", code, "id_token", idToken,
+                    "device", device), false);
             signedInAs(r, Json.str(Json.map(r.get("user")), "email"));
             return info();
         }
