@@ -393,7 +393,7 @@ public final class Api {
                 problem = "Could not reach the AI (" + Util.shortError(e, 80) + ").";
             }
             Map<String, Object> simple = Profile.fromCvText(cv);
-            for (String k : new String[]{"phone", "graduation_year"}) {
+            for (String k : new String[]{"phone", "graduation_year", "first_job_year"}) {
                 if (Json.str(data, k).isEmpty()) {
                     data.put(k, simple.get(k));
                 }

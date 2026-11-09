@@ -330,12 +330,14 @@ public final class Ai {
     public Map<String, Object> profileFromCv() {
         String out = chat(Json.list(
                 msg("system", "You read CVs and fill in job application details. Reply with JSON only."),
-                msg("user", "CV:\n" + cv + "\n\nReturn ONLY {\"phone\": \"\", \"city\": \"\", \"graduation_year\": \"\", "
+                msg("user", "CV:\n" + cv + "\n\nReturn ONLY {\"phone\": \"\", \"city\": \"\", \"graduation_year\": \"\", \"first_job_year\": \"\", "
                         + "\"english\": \"\", \"titles\": [], \"location\": \"\"} where:\n"
                         + "- phone: the candidate's mobile number exactly as written in the CV, or \"\".\n"
                         + "- city: where the candidate lives, as \"City, Country\", or \"\".\n"
                         + "- graduation_year: the 4-digit year the candidate finished their bachelor's degree (or their "
                         + "highest degree), or \"\".\n"
+                        + "- first_job_year: the 4-digit year the candidate started their first real job (not an "
+                        + "internship or training), from the experience section, or \"\".\n"
                         + "- english: one of Native, Fluent, Professional, Good, Basic, from what the CV says, or \"\".\n"
                         + "- titles: 3 to 5 LinkedIn job titles (job-search keywords) that fit this candidate best.\n"
                         + "- location: the country (or city) the candidate should search jobs in.")), 350);
@@ -347,6 +349,7 @@ public final class Ai {
             }
         }
         String year = Json.str(d, "graduation_year").replaceAll("[^0-9]", "");
+        String firstJob = Json.str(d, "first_job_year").replaceAll("[^0-9]", "");
         String english = "";
         for (String level : Profile.ENGLISH) {
             if (level.equalsIgnoreCase(Json.str(d, "english").trim())) {
@@ -354,7 +357,8 @@ public final class Ai {
             }
         }
         return Json.obj("phone", Profile.clean("phone", Json.str(d, "phone")), "city", Util.cut(Json.str(d, "city").trim(), 80),
-                "graduation_year", year.length() == 4 ? year : "", "english", english, "titles", titles,
+                "graduation_year", year.length() == 4 ? year : "", "first_job_year", firstJob.length() == 4 ? firstJob : "",
+                "english", english, "titles", titles,
                 "location", Util.cut(Json.str(d, "location").trim(), 80));
     }
 

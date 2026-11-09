@@ -85,7 +85,14 @@
     return h ? `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}` : `${m}:${String(s).padStart(2, '0')}`;
   };
   const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || `${one}s`)}`;
-  // Same count as the app: whole years since July of the graduation year.
+  // Same count as the app: years since the first job (2024 -> 2 in 2026), at least 1.
+  function jobYears(y) {
+    const year = Number(y);
+    const now = new Date().getFullYear();
+    if (!/^\d{4}$/.test(String(y || '')) || year < 1960 || year > now) return -1;
+    return Math.max(1, now - year);
+  }
+  // Whole years since July of the graduation year.
   function yearsSince(y) {
     const year = Number(y);
     if (!/^\d{4}$/.test(String(y || '')) || year < 1950) return -1;
@@ -735,6 +742,8 @@
   const PF = [
     { k: 'phone', label: 'Mobile number', kind: 'tel', ph: '01012345678', req: true },
     { k: 'city', label: 'City you live in', kind: 'text', ph: 'Cairo, Egypt', req: true },
+    { k: 'first_job_year', label: 'Year you started your first job', kind: 'year', ph: '2024', req: true,
+      help: 'Every skill or tool in your CV counts from this year: 2024 means 2 years of Jenkins in 2026.' },
     { k: 'graduation_year', label: 'Year you graduated', kind: 'year', ph: '2019', req: true },
     { k: 'expected_salary', label: 'Expected monthly salary', kind: 'money', ph: '30000', req: true },
     { k: 'current_salary', label: 'Current monthly salary', kind: 'money', ph: '20000', req: true,
@@ -806,7 +815,7 @@
       b.closest('.pf').classList.remove('missing');
     }));
     box.querySelector('[data-k="notice_days"]').addEventListener('input', () => paintDays(box));
-    box.querySelector('[data-k="graduation_year"]').addEventListener('input', () => paintYears(box));
+    box.querySelector('[data-k="first_job_year"]').addEventListener('input', () => paintYears(box));
     box.querySelector('[data-k="currency"]').addEventListener('change', () => paintCurrency(box));
     box.querySelectorAll('input').forEach((i) => i.addEventListener('input', () => {
       i.closest('.pf').classList.remove('missing');
@@ -821,7 +830,7 @@
 
   function rulesBox() {
     return `<details class="rules"><summary>How the app answers questions</summary><ul>
-      <li>Years of experience with something in your CV: the years since you graduated. Not in your CV: you are asked (or the AI answers, if you choose that).</li>
+      <li>Years of experience with a skill or tool in your CV: the years since your first job. Not in your CV: you are asked once, and your answer is kept.</li>
       <li>Questions that say “how many” get a number only.</li>
       <li>Notice period in days, or weeks or months when the question asks for them.</li>
       <li>Salary per month in your currency. If a question names another currency (USD, SAR…) it is converted with today's rate, and multiplied by 12 when it asks per year.</li>
@@ -845,8 +854,8 @@
   // Fill empty answers from what the AI read in the CV, and mark them.
   function fillSuggestions(box) {
     if (!suggest || !box.querySelector('.pf')) return;
-    for (const k of ['phone', 'city', 'graduation_year', 'english']) {
-      const v = suggest[k];
+    for (const k of ['phone', 'city', 'first_job_year', 'graduation_year', 'english']) {
+      const v = suggest[k] || (k === 'first_job_year' ? suggest.earliest_job_year : '');
       if (v && !getPf(box, k)) {
         setPf(box, k, v);
         const tag = box.querySelector(`.pf[data-f="${k}"] .sug`);
@@ -860,9 +869,9 @@
     box.querySelectorAll('[data-days] .pick').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
   }
   function paintYears(box) {
-    const y = yearsSince(box.querySelector('[data-k="graduation_year"]').value.trim());
-    const el = box.querySelector('[data-years]');
-    el.innerHTML = y >= 0 ? `So <b>${plural(y, 'year')}</b> of experience for skills in your CV.` : '';
+    const y = jobYears(box.querySelector('[data-k="first_job_year"]').value.trim());
+    const el = box.querySelector('[data-f="first_job_year"] [data-years]');
+    if (el) el.innerHTML = y >= 0 ? `So <b>${plural(y, 'year')}</b> of experience with every skill in your CV.` : '';
   }
   function paintCurrency(box) {
     const c = box.querySelector('[data-k="currency"]').value || 'EGP';
@@ -881,6 +890,11 @@
     const y = Number(out.graduation_year);
     if (out.graduation_year && (y < 1960 || y > new Date().getFullYear() + 1)) {
       box.querySelector('.pf[data-f="graduation_year"]').classList.add('missing');
+      missing++;
+    }
+    const fj = Number(out.first_job_year);
+    if (out.first_job_year && (fj < 1960 || fj > new Date().getFullYear())) {
+      box.querySelector('.pf[data-f="first_job_year"]').classList.add('missing');
       missing++;
     }
     if (missing) {
@@ -2580,7 +2594,7 @@
     const p = (profileData && profileData.profile) || {};
     const a = acc();
     const cur = p.currency || 'EGP';
-    const years = yearsSince(p.graduation_year);
+    const years = jobYears(p.first_job_year) >= 0 ? jobYears(p.first_job_year) : yearsSince(p.graduation_year);
     const list = [
       ['Name', a.name], ['Email', a.email], ['Mobile', p.phone], ['City', p.city],
       ['Expected salary', p.expected_salary ? `${p.expected_salary} ${cur}` : '', p.expected_salary],

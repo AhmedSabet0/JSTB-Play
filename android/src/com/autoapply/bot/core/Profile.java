@@ -18,12 +18,12 @@ import java.util.regex.Pattern;
 
 /**
  * Your answers to the questions most Easy Apply forms ask (the setup screen), and the rules that fill forms from them:
- * years of experience with something in your CV = years since you graduated, "how many" = a number, notice period in
+ * years of experience with something in your CV = years since your first job, "how many" = a number, notice period in
  * days, salary in your currency (converted with today's rate when a question names another one), phone, city, military
  * service, relocation, on-site work, work permit, visa sponsorship, English level and driving license.
  */
 public final class Profile {
-    public static final String[] FIELDS = {"phone", "city", "graduation_year", "current_salary", "expected_salary",
+    public static final String[] FIELDS = {"phone", "city", "graduation_year", "first_job_year", "current_salary", "expected_salary",
         "currency", "notice_days", "military", "relocate", "onsite", "authorized", "sponsorship", "english", "driving"};
     public static final String[] ENGLISH = {"Native", "Fluent", "Professional", "Good", "Basic"};
     public static final String[] MILITARY = {"Completed", "Exempted", "Postponed", "Not applicable"};
@@ -96,7 +96,7 @@ public final class Profile {
     static String clean(String field, String raw) {
         String v = raw.replace('\n', ' ').trim();
         if (field.equals("current_salary") || field.equals("expected_salary") || field.equals("notice_days")
-                || field.equals("graduation_year")) {
+                || field.equals("graduation_year") || field.equals("first_job_year")) {
             v = v.replace(",", "").replaceAll("\\.\\d*$", "").replaceAll("[^0-9]", "");
         } else if (field.equals("currency")) {
             v = v.toUpperCase(Locale.ROOT).replaceAll("[^A-Z]", "");
@@ -144,6 +144,7 @@ public final class Profile {
         List<String> titles = extractTitles(text);
         return Json.obj("phone", clean("phone", phone), "city", "", "graduation_year", best > 0 ? String.valueOf(best) : "",
                 "earliest_job_year", firstJob > 0 ? String.valueOf(firstJob) : "",
+                "first_job_year", firstJob > 0 ? String.valueOf(firstJob) : "",
                 "english", "", "titles", titles, "location", "");
     }
 
@@ -211,8 +212,12 @@ public final class Profile {
      * Falls back to years since graduation or 2.
      */
     public static int totalExperienceYears(Map<String, Object> p, String cvText, double now) {
-        int jobYear = earliestJobYear(cvText);
         int thisYear = Calendar.getInstance().get(Calendar.YEAR);
+        int set = firstJobYear(p);
+        if (set > 0) {   // the year you said you started working: 2024 -> 2 years in 2026
+            return Math.max(1, thisYear - set);
+        }
+        int jobYear = earliestJobYear(cvText);
         if (jobYear > 1980 && jobYear <= thisYear) {
             return Math.max(1, thisYear - jobYear);
         }
@@ -221,6 +226,16 @@ public final class Profile {
             return Math.max(1, gradYears);
         }
         return 2;
+    }
+
+    /** The year you started your first job (the setup), or -1. */
+    public static int firstJobYear(Map<String, Object> p) {
+        try {
+            int y = Integer.parseInt(Json.str(p, "first_job_year").trim());
+            return y >= 1960 && y <= Calendar.getInstance().get(Calendar.YEAR) ? y : -1;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     /** Whole years since graduating (counted from July of that year), or -1 when the year is not set. */
@@ -247,9 +262,13 @@ public final class Profile {
         String cur = Json.str(p, "currency");
         line(l, "Phone", Json.str(p, "phone"));
         line(l, "Lives in", Json.str(p, "city"));
+        if (firstJobYear(p) > 0) {
+            l.add("First job in " + firstJobYear(p) + ": " + totalExperienceYears(p, "", now)
+                    + " years of experience, also the years with each skill or tool in the CV");
+        }
         int years = yearsSince(Json.str(p, "graduation_year"), now);
         if (years >= 0) {
-            l.add("Graduated in " + Json.str(p, "graduation_year") + " (" + years + " years of experience since graduation)");
+            l.add("Graduated in " + Json.str(p, "graduation_year"));
         }
         if (!Json.str(p, "current_salary").isEmpty()) {
             l.add("Current monthly salary: " + Json.str(p, "current_salary") + " " + cur);
@@ -803,6 +822,9 @@ public final class Profile {
 
     private Hit experience(Map<String, Object> p, String q, String kind, List<String> opts, String cv, double now) {
         String s = subject(q);
+        if (s != null && s.trim().matches("(?i)((of|in|on|the|a|an|with|for|at|to|your|you)\\s*)*")) {
+            s = "";   // "years of experience in total", "years of relevant experience": experience in total
+        }
         if (s == null) {
             if (!has(q, "experience") || !has(q, "years?|yrs?|how many|how long|total")) {
                 return null;
@@ -810,7 +832,7 @@ public final class Profile {
             s = "";
         }
         int totalYears = totalExperienceYears(p, cv, now);
-        int firstJob = earliestJobYear(cv);
+        int firstJob = firstJobYear(p) > 0 ? firstJobYear(p) : earliestJobYear(cv);
         String jobYearStr = firstJob > 0 ? String.valueOf(firstJob) : Json.str(p, "graduation_year");
 
         Integer own = store == null ? null : Facts.skillYears(store.factsCopy(), s);
@@ -825,8 +847,7 @@ public final class Profile {
             years = totalYears;
             why = (s.isEmpty() ? "total experience" : "'" + s + "' is in your CV") + ": " + years + " years since your first job (" + (jobYearStr.isEmpty() ? "earliest role" : jobYearStr) + ")";
         } else {
-            years = 0;
-            why = "'" + s + "' is not mentioned in your CV";
+            return null;   // not in your CV and not in your info: you are asked once, and your answer is kept
         }
 
         if (isYesNo(opts) || (opts.isEmpty() && has(q, "^(do|does|have|are|is) you\\b") && !"numeric".equals(kind))) {
