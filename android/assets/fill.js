@@ -60,10 +60,38 @@
     return !!(el.required || el.getAttribute('aria-required') === 'true' || /\*\s*$/.test(String(label)));
   }
 
+  // The site's own message under a field: "Enter a decimal number larger than 0.0", "This field is required"...
+  var NUM_ERR = /\b(decimal|whole|valid)?\s*number\b|numeric|digits? only|only numbers|أرقام|رقم/i;
+  var ERR_SEL = '[role="alert"], [aria-live="assertive"], .artdeco-inline-feedback--error, [class*="error" i], [class*="invalid" i], [class*="danger" i]';
+  function errorOf(el) {
+    if (!el) return '';
+    var ids = (el.getAttribute('aria-errormessage') || '') + ' ' + (el.getAttribute('aria-describedby') || '');
+    var found = '';
+    ids.split(/\s+/).forEach(function (id) {
+      if (found || !id) return;
+      var d = document.getElementById(id);
+      if (d && visible(d) && (el.getAttribute('aria-invalid') === 'true' || d.matches(ERR_SEL) || d.querySelector(ERR_SEL))) found = clean(textOf(d));
+    });
+    if (found) return found.slice(0, 200);
+    var box = el.closest('.fb-dash-form-element, .jobs-easy-apply-form-element, [data-test-form-element], fieldset, [class*="form-group" i], [class*="form-field" i], [class*="question" i]')
+      || (el.parentElement && el.parentElement.parentElement) || el.parentElement;
+    if (!box) return '';
+    var errs = box.querySelectorAll(ERR_SEL);
+    for (var i = 0; i < errs.length; i++) {
+      var e = errs[i];
+      if (e === el || e.contains(el) || !visible(e)) continue;
+      var t = clean(textOf(e));
+      if (t.length >= 3 && t.length <= 200 && !/^\*$/.test(t)) return t;
+    }
+    return el.getAttribute('aria-invalid') === 'true' ? 'The site does not accept this answer.' : '';
+  }
+
   function isNumericInput(el, label) {
     var type = (el.getAttribute('type') || el.tagName).toLowerCase();
     var mode = (el.getAttribute('inputmode') || el.inputMode || '').toLowerCase();
     if (type === 'number' || mode === 'numeric' || mode === 'decimal') return true;
+    if (/numeric/i.test(el.id || '') || /numeric/i.test(el.name || '')) return true;   // LinkedIn: ...-numeric
+    if (NUM_ERR.test(errorOf(el))) return true;
     var lab = String(label || '').toLowerCase();
     return /\b(how many (years|months|days)|years of experience|how long have you|gross salary|expected salary|current salary|salary|compensation|notice period in days|gpa)\b/i.test(lab)
       || /\b(experience|salary|gross|pay|ctc|wage)\b/i.test(lab);
@@ -335,6 +363,7 @@
         placeholder: clean(el.getAttribute('placeholder') || ''),
         maxlength: el.maxLength > 0 ? el.maxLength : 0,
         required: isRequired(el, lbl),
+        error: errorOf(el),
       };
       fields.push({ f: f, els: [el] });
       out.push(f);
@@ -352,6 +381,7 @@
         placeholder: '',
         maxlength: 0,
         required: isRequired(g.els[0], label),
+        error: errorOf(g.els[0].closest('fieldset') ? g.els[0] : g.els[0]),
       };
       fields.push({ f: f, els: g.els });
       out.push(f);
@@ -552,7 +582,12 @@
     ensureResumeSelected();
     var btns = findModalButtons();
     var bType = btns.submit ? 'submit' : btns.review ? 'review' : btns.next ? 'next' : 'none';
+    var refused = fields.map(function (item) {
+      var e = errorOf(item.els[0]);
+      return e ? item.f.label + ': ' + e : '';
+    }).filter(Boolean);
     return JSON.stringify({
+      errors: refused,
       missing: missing(),
       file: fileWanted(),
       submit: !!(btns.submit || btns.review || btns.next || submitButton()),

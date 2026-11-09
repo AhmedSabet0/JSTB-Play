@@ -20,6 +20,9 @@ public final class Filler {
     static final Pattern EMAIL = Pattern.compile("(?i)e-?mail");
     static final Pattern CONSENT = Pattern.compile("(?i)agree|consent|privacy|terms|confirm|acknowledge|certify|accurate");
 
+    /** A site message that wants a number ("Enter a decimal number larger than 0.0", "whole number"...). */
+    static final Pattern SITE_NUMBER = Pattern.compile("(?i)\\b(decimal|whole|valid)?\\s*number\\b|numeric|digits? only|أرقام|رقم");
+
     /** How sure the AI must be to fill a field by itself; below that you are asked (and your answer is kept). */
     static final int SURE_ENOUGH = 75;
     /** Questions that want a number: "how many", "how much", years, salary, notice in days. */
@@ -83,8 +86,22 @@ public final class Filler {
             String label = Json.str(f, "label").trim();
             String kind = Json.str(f, "kind");
             List<String> options = Json.strings(f.get("options"));
-            if (key.isEmpty() || label.isEmpty() || !Json.str(f, "value").trim().isEmpty()) {
-                continue;  // already filled (the site or you), or nothing to go by
+            if (key.isEmpty() || label.isEmpty()) {
+                continue;  // nothing to go by
+            }
+            String siteError = Json.str(f, "error").trim();
+            if (!siteError.isEmpty() && !"checkbox".equals(kind) && !"file".equals(kind)) {
+                // The site refuses what is there ("Enter a decimal number..."): you decide, and your answer is kept.
+                boolean wantsNumber = "number".equals(kind) || SITE_NUMBER.matcher(siteError).find();
+                String now = Json.str(f, "value").trim();
+                String hint = wantsNumber ? number(now) : now;
+                ask.add(Json.obj("key", key, "label", label, "kind", wantsNumber ? "number" : kind, "options", options,
+                        "suggestion", hint, "required", true, "error", siteError));
+                skipped.add(label);
+                continue;
+            }
+            if (!Json.str(f, "value").trim().isEmpty()) {
+                continue;  // already filled (the site or you)
             }
             Object value = null;
             Object suggestion = null;

@@ -1004,6 +1004,9 @@ public final class MainActivity extends Activity {
 
     void showBrowser(String url, String jobId, String title, boolean auto) {
         askedSkipped.clear();   // a new job: its questions are new
+        askedFixed.clear();
+        advanceSig = "";
+        advanceSame = 0;
         closePanes();
         browserJob = jobId == null ? "" : jobId;
         browserJobTitle = title == null ? "" : title;
@@ -1433,6 +1436,9 @@ public final class MainActivity extends Activity {
                                     showReview("Application ready. Tap Submit Application below to send.", false, true);
                                     web.evaluateJavascript("window.AAFill && window.AAFill.toSubmit()", null);
                                 } else {
+                                    if (!mayAdvance(Json.strings(v.get("errors")), "none|" + btnType + "|" + jsText(raw))) {
+                                        return;   // the site refuses something, or does not move on: you look
+                                    }
                                     reviewSubmit.setText("review".equals(btnType) ? "Review Application" : "Next Step");
                                     reviewSubmit.setTextColor(dark ? 0xffe7edf6 : 0xff13213c);
                                     reviewSubmit.setBackground(round(dark ? 0xff152034 : 0xffffffff, dark ? 0xff2a3a55 : 0xffd5dde8));
@@ -1505,7 +1511,8 @@ public final class MainActivity extends Activity {
                                         final List<Map<String, Object>> toAsk = new ArrayList<Map<String, Object>>();
                                         for (Object q : Json.arr(r.get("ask"))) {
                                             Map<String, Object> qm = Json.map(q);
-                                            if (!askedSkipped.contains(Json.str(qm, "label"))) {
+                                            String ql = Json.str(qm, "label");
+                                            if (!askedSkipped.contains(ql) && !(Json.str(qm, "error").length() > 0 && askedFixed.contains(ql))) {
                                                 toAsk.add(qm);
                                             }
                                         }
@@ -1578,7 +1585,8 @@ public final class MainActivity extends Activity {
                                                                                     + "onAct:function(){ if(window.AAFill && window.AAFill.focusQuestion) window.AAFill.focusQuestion(" + Json.stringify(firstMissing) + "); }"
                                                                                     + "})";
                                                                             web.evaluateJavascript(jsPill, null);
-                                                                        } else if ("next".equals(btnType) || "review".equals(btnType)) {
+                                                                        } else if (("next".equals(btnType) || "review".equals(btnType))
+                                                                                && mayAdvance(Json.strings(v.get("errors")), btnType + "|" + Json.stringify(fields))) {
                                                                             try {
                                                                                 android.view.inputmethod.InputMethodManager imm = (android.view.inputmethod.InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
                                                                                 if (imm != null && web != null) {
@@ -1640,6 +1648,30 @@ public final class MainActivity extends Activity {
 
     /** Questions a form asks that your answers, your info and the AI do not know (for sure). */
     private final java.util.Set<String> askedSkipped = new java.util.HashSet<String>();
+    private final java.util.Set<String> askedFixed = new java.util.HashSet<String>();
+    /** The last step the app moved on from, and how often in a row: a site that does not move on stops the moving. */
+    private String advanceSig = "";
+    private int advanceSame = 0;
+
+    /** True when the app may tap the site's Next/Review again: not when the site shows a red message, and not a third
+     *  time on a page that did not change (the site refuses something: you see it and fix it). */
+    private boolean mayAdvance(List<String> siteErrors, String pageSig) {
+        if (!siteErrors.isEmpty()) {
+            showReview("The site does not accept: " + Util.cut(Util.join("; ", siteErrors), 160)
+                    + ". Fix it on the page, then tap Fill the form.", false, false);
+            advanceSig = "";
+            return false;
+        }
+        advanceSame = pageSig.equals(advanceSig) ? advanceSame + 1 : 0;
+        advanceSig = pageSig;
+        if (advanceSame >= 2) {
+            showReview("The site did not move on. Look for a red message on the page, fix it, then tap Fill the form.", false, true);
+            advanceSame = 0;
+            advanceSig = "";
+            return false;
+        }
+        return true;
+    }
 
     /** Asks you one question after the other in the app's own window: your answer goes into the form and into your
      *  info, so the next form that asks it is filled by itself. Skip leaves it for you on the page. */
@@ -1662,8 +1694,13 @@ public final class MainActivity extends Activity {
         qText.setTypeface(Typeface.DEFAULT_BOLD);
         box.addView(qText);
         TextView hint = new TextView(this);
-        hint.setText(suggestion.isEmpty() ? "Answer once: it is saved, and forms that ask it again are filled by themselves."
+        String siteError = Json.str(q, "error");
+        hint.setText(!siteError.isEmpty() ? "The site says: " + siteError + "\nYour answer is saved for next time."
+                : suggestion.isEmpty() ? "Answer once: it is saved, and forms that ask it again are filled by themselves."
                 : "Suggested from your CV. Check it: your answer is saved for next time.");
+        if (!siteError.isEmpty()) {
+            hint.setTextColor(dark ? 0xffffb4a8 : 0xffb3261e);
+        }
         hint.setTextSize(13);
         hint.setPadding(0, dp(4), 0, dp(10));
         box.addView(hint);
@@ -1719,6 +1756,9 @@ public final class MainActivity extends Activity {
                             return;
                         }
                         dialog.dismiss();
+                        if (!Json.str(q, "error").isEmpty()) {
+                            askedFixed.add(label);   // the site refused it once: if it still does, you fix it on the page
+                        }
                         bridgePool.execute(new Runnable() {
                             @Override
                             public void run() {
