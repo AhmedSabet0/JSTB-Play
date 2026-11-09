@@ -155,6 +155,7 @@
     renderQuestionBar();
   }
   function back() {
+    if (!$('run').hidden) { runStop(); return true; }
     if (sheetOpen()) { dismissSheets(); return true; }
     if (view === 'setup') {
       const steps = wSteps();
@@ -2347,7 +2348,8 @@
     tab.hidden = !n;
     tab.textContent = n > 99 ? '99+' : n;
   }
-  $('next-apply').addEventListener('click', () => openSheet($('next-apply').dataset.id));
+  // Apply now: the top job opens with its form filled, and when it is sent the next one comes (Stop any time).
+  $('next-apply').addEventListener('click', () => startRun(nextJobs().map((j) => j.id)));
   $('next-more').addEventListener('click', () => go('queue'));
 
   // Searches: LinkedIn (in the LinkedIn app) for each of your job titles, and a few sites in the app's browser.
@@ -2429,6 +2431,8 @@
       }));
     }
     const shown = qFilter === 'skipped' ? skipped : list.filter((j) => dayOf(j) === qFilter);
+    $('run-start').hidden = qFilter === 'skipped' || !shown.length;
+    $('run-n').textContent = shown.length;
     $('queue-list').innerHTML = shown.map((j) => `<li class="jcard"><button type="button" data-id="${esc(j.id)}"><span class="jc-title">${
       esc(j.title)}</span><span class="jc-co">${esc(j.company || hostOf(j.url))}${j.location ? ` · ${esc(j.location)}` : ''}</span><span class="tags">${
       tagsHtml(j)}<span class="when">${esc(ago(postedOf(j)))}</span></span></button></li>`).join('');
@@ -2438,6 +2442,104 @@
     $('queue-empty-text').textContent = qFilter === 'skipped' ? 'Jobs you skip wait here, in case you change your mind.'
       : 'New jobs for your job titles come in from LinkedIn and Wuzzuf every hour. Tap Refresh to look now.';
     renderFeedLine();
+  }
+
+  // ------------------------------------------------------------------ apply in a row
+  // One job after the other: its form opens filled (you check it and tap the site's Submit); the thank-you page marks
+  // it applied and, after a short count, the next one opens. Closed without sending: sent, skip it, or stop.
+  const run = { on: false, ids: [], at: 0, current: null, sent: 0, skipped: 0, timer: null };
+  $('run-start').addEventListener('click', () => {
+    const first = (qFilter === 'skipped' ? [] : nextJobs().filter((j) => dayOf(j) === qFilter)).map((j) => j.id);
+    startRun(first.concat(nextJobs().map((j) => j.id).filter((id) => !first.includes(id))));
+  });
+  function startRun(ids) {
+    if (!ids.length) { toast('No jobs waiting. Tap Refresh on the Jobs tab.'); return; }
+    Object.assign(run, { on: true, ids, at: 0, current: null, sent: 0, skipped: 0 });
+    runOpen();
+  }
+  const runLeft = () => run.ids.slice(run.at).filter((id) => (findJob(id) || {}).state === 'new');
+  async function runOpen() {
+    clearInterval(run.timer);
+    while (run.at < run.ids.length && (findJob(run.ids[run.at]) || {}).state !== 'new') run.at++;
+    if (run.at >= run.ids.length) { runDone(); return; }
+    const id = run.ids[run.at];
+    run.current = id;
+    $('run').hidden = true;
+    closeSheets();
+    try {
+      await api('/api/copilot/open', { id, fill: true, external: false });
+    } catch (e) {
+      toast(e.message, true);
+      runStop();
+    }
+  }
+  function runNext() { run.at++; runOpen(); }
+  function runStop() {
+    clearInterval(run.timer);
+    const was = run.on;
+    run.on = false;
+    run.current = null;
+    $('run').hidden = true;
+    if (was && (run.sent || run.skipped)) toast(`Stopped: ${plural(run.sent, 'application')} sent${run.skipped ? `, ${run.skipped} skipped` : ''}.`);
+  }
+  function runCard(o) {
+    $('run-mark').textContent = o.mark;
+    $('run-mark').className = `run-mark ${o.tone || ''}`;
+    $('run-step').textContent = o.step || '';
+    $('run-title').textContent = o.title;
+    $('run-sub').textContent = o.sub || '';
+    $('run-actions').innerHTML = o.buttons.map((b, i) => `<button class="btn${b.primary ? ' primary' : ''}" data-i="${i}" type="button">${esc(b.label)}</button>`).join('');
+    $('run-actions').querySelectorAll('[data-i]').forEach((el) => el.addEventListener('click', () => { clearInterval(run.timer); o.buttons[+el.dataset.i].run(); }));
+    $('run-bar-box').hidden = !o.count;
+    $('run').hidden = false;
+    clearInterval(run.timer);
+    if (o.count) {   // the next job opens by itself after a few seconds
+      const t0 = Date.now();
+      const ms = o.count * 1000;
+      $('run-bar').style.width = '0%';
+      run.timer = setInterval(() => {
+        const f = Math.min(1, (Date.now() - t0) / ms);
+        $('run-bar').style.width = `${f * 100}%`;
+        const goBtn = $('run-actions').querySelector('.primary');
+        if (goBtn) goBtn.textContent = `Next now (${Math.max(1, Math.ceil((ms - (Date.now() - t0)) / 1000))})`;
+        if (f >= 1) { clearInterval(run.timer); runNext(); }
+      }, 100);
+    }
+  }
+  function runBetween(kind) {
+    const j = findJob(run.current) || {};
+    const next = runLeft().filter((id) => id !== run.current)[0];
+    const nj = next ? findJob(next) : null;
+    const step = `${run.sent} sent${run.skipped ? ` · ${run.skipped} skipped` : ''} · ${plural(runLeft().filter((id) => id !== run.current).length, 'job')} left`;
+    if (!nj && kind === 'sent') { runDone(); return; }
+    if (kind === 'sent') {
+      runCard({ mark: '✓', tone: 'ok', step, title: `Sent: ${j.title || 'the job'}`, sub: `Next: ${nj.title}${nj.company ? ` at ${nj.company}` : ''}`, count: 4,
+        buttons: [{ label: 'Stop', run: runStop }, { label: 'Skip next', run: async () => { await skipQuiet(next); run.skipped++; runBetween('sent'); } },
+          { label: 'Next now', primary: true, run: runNext }] });
+      return;
+    }
+    runCard({ mark: '?', tone: 'ask', step, title: 'Did you send it?', sub: `${j.title || ''}${j.company ? ` at ${j.company}` : ''}`,
+      buttons: [{ label: 'Stop', run: runStop },
+        { label: 'No, skip it', run: () => { skipQuiet(run.current); run.skipped++; nj ? runNext() : runDone(); } },
+        { label: 'Yes, sent', primary: true, run: async () => { await appliedQuiet(run.current); run.sent++; nj ? runBetween('sent') : runDone(); } }] });
+  }
+  function runDone() {
+    clearInterval(run.timer);
+    run.on = false;
+    run.current = null;
+    runCard({ mark: '🎉', tone: 'ok', step: 'All done', title: `${plural(run.sent, 'application')} sent`,
+      sub: run.skipped ? `${run.skipped} skipped. New jobs come in every hour.` : 'New jobs come in every hour.',
+      buttons: [{ label: 'Applied list', run: () => { $('run').hidden = true; go('tracker'); } },
+        { label: 'Done', primary: true, run: () => { $('run').hidden = true; go('queue'); } }] });
+    loadTracker(true);
+  }
+  async function appliedQuiet(id) {
+    try { const r = await api('/api/copilot/update', { id, state: 'applied' }); queue = r.items || queue; rememberJobs(); paintQueue(); refresh(); }
+    catch (e) { toast(e.message, true); }
+  }
+  async function skipQuiet(id) {
+    try { const r = await api('/api/copilot/update', { id, state: 'skipped' }); queue = r.items || queue; rememberJobs(); paintQueue(); }
+    catch (e) { toast(e.message, true); }
   }
 
   // "Updated 5 min ago" and Refresh: the hourly look at LinkedIn and Wuzzuf.
@@ -2860,6 +2962,12 @@
     refresh();
   };
   window.aaBrowserClosed = async (id, applied) => {
+    if (run.on && id && id === run.current) {
+      await loadQueue(true, { noPill: true });
+      refresh();
+      if (applied) { run.sent++; runBetween('sent'); } else runBetween('ask');
+      return;
+    }
     await loadQueue(true, { noPill: true });
     await refresh();
     if (!id) return;

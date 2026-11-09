@@ -30,6 +30,38 @@ public final class Filler {
      *  fields fill.js collected. Answers come from your account, your setup answers and your info, then the AI when it
      *  is sure. What none of them knows is asked of you (`ask`); nothing is made up. */
     public static Map<String, Object> answers(Engine engine, List<Object> fields, String title, String company) {
+        return answers(engine, fields, title, company, null);
+    }
+
+    /** A cover letter field, or a free-text "why this job" question: a letter written for this job fits it. */
+    static final Pattern LETTER_Q = Pattern.compile("(?i)cover\\s*letter|motivation(al)?\\s*(letter|statement)|why (do|would) you (want|like)"
+            + "|why are you (interested|applying|a good fit)|why should we (hire|choose)|why (this|our) (company|role|position|job)"
+            + "|message to (the )?(hiring|recruiter|employer|company)|introduce yourself|tell us about yourself|خطاب|رسالة تعريف|لماذا");
+
+    /** The job's cover letter: the one written before, or a new one (kept with the job). "" when the AI cannot. */
+    static String letterFor(Engine engine, Bot bot, Map<String, Object> item, String title, String company, int max) {
+        String letter = item == null ? "" : Json.str(item, "letter").trim();
+        if (letter.isEmpty()) {
+            try {
+                letter = bot.ai.coverLetter(title, company, item == null ? "" : Json.str(item, "description")).trim();
+                if (item != null && !letter.isEmpty()) {
+                    engine.copilot.update(Json.str(item, "id"), Json.obj("letter", letter));
+                }
+            } catch (RuntimeException e) {
+                log("  No cover letter: " + Util.shortError(e, 80));
+                return "";
+            }
+        }
+        if (max > 0 && letter.length() > max) {   // a short box: whole sentences that fit
+            String cut = letter.substring(0, max);
+            int end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf(".\n"));
+            letter = end > max / 3 ? cut.substring(0, end + 1) : cut.trim();
+        }
+        return letter;
+    }
+
+    public static Map<String, Object> answers(Engine engine, List<Object> fields, String title, String company,
+                                              Map<String, Object> item) {
         Map<String, String> cfg = engine.config.load();
         Bot bot = new Bot(engine, cfg, new Bot.Options(), engine.newAi(engine.config.cvText(), engine.notesForAi(), "help"),
                 null, new ArrayList<String>(), cfg.get("LOCATION") == null ? "" : cfg.get("LOCATION"), new Session("apply"));
@@ -71,6 +103,14 @@ public final class Filler {
                 value = name.isEmpty() ? null : name;
             } else {
                 identity = false;
+            }
+            if (value == null && !identity && options.isEmpty() && LETTER_Q.matcher(label).find() && !aiDown
+                    && ("textarea".equals(kind) || Json.num(f, "maxlength", 0) == 0 || Json.num(f, "maxlength", 0) >= 300)) {
+                String letter = letterFor(engine, bot, item, title, company, (int) Json.num(f, "maxlength", 0));
+                if (!letter.isEmpty()) {
+                    out.put(key, letter);   // written for this job: you read it before you send
+                    continue;
+                }
             }
             boolean numeric = "number".equals(kind) || (options.isEmpty() && NUMERIC_Q.matcher(label).find());
             String botKind = numeric ? "numeric" : "textarea".equals(kind) ? "textarea"

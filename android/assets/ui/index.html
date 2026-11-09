@@ -342,6 +342,10 @@
       <button id="feed-refresh" class="linklike" type="button">Refresh</button>
     </div>
     <div class="day-tabs" id="day-tabs" role="tablist" aria-label="Posted"></div>
+    <button id="run-start" class="btn primary wide run-start" type="button" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+      <span>Apply to these <b id="run-n">0</b> one after the other</span>
+    </button>
     <ul id="queue-list" class="cards"></ul>
     <div id="queue-empty" class="empty-state" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 16v-1H3v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4h-7v1h-4zm10-9h-4V5l-2-2h-4L8 5v2H4a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h6v-2h4v2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zm-6 0h-4V5h4v2z"/></svg>
@@ -754,6 +758,17 @@
         </div>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="run" class="run-wrap" hidden role="dialog" aria-modal="true" aria-labelledby="run-title">
+  <div class="run-card">
+    <div class="run-mark" id="run-mark" aria-hidden="true">✓</div>
+    <p class="run-step" id="run-step"></p>
+    <h2 id="run-title"></h2>
+    <p class="run-sub" id="run-sub"></p>
+    <div class="run-bar" id="run-bar-box" aria-hidden="true"><i id="run-bar"></i></div>
+    <div class="run-actions" id="run-actions"></div>
   </div>
 </div>
 

@@ -463,7 +463,7 @@ public final class Api {
             Map<String, Object> item = Json.str(b, "id").isEmpty() ? null : engine.copilot.get(Json.str(b, "id"));
             String title = item != null ? Json.str(item, "title") : Json.str(b, "title");
             String company = item != null ? Json.str(item, "company") : Json.str(b, "company");
-            Map<String, Object> out = Filler.answers(engine, Json.arr(b.get("fields")), title, company);
+            Map<String, Object> out = Filler.answers(engine, Json.arr(b.get("fields")), title, company, item);
             out.put("ok", true);
             return out;
         }
