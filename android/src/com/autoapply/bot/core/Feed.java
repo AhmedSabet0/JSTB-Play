@@ -269,8 +269,7 @@ public final class Feed {
             if (url.isEmpty() || jobTitle.isEmpty()) {
                 continue;
             }
-            Matcher code = Pattern.compile("/jobs/p/([A-Za-z0-9]+)").matcher(url);
-            String id = "wz:" + (code.find() ? code.group(1) : Json.str(it, "id"));
+            String id = wuzzufId(url).isEmpty() ? "wz:" + Json.str(it, "id") : wuzzufId(url);
             String company = companies.containsKey(Json.str(it, "id")) ? companies.get(Json.str(it, "id")) : Json.str(a, "companyName");
             Map<String, Object> loc = Json.map(a.get("location"));
             String city = nameOf(loc.get("city"));
@@ -282,8 +281,9 @@ public final class Feed {
         return out;
     }
 
-    /** The job's page on Wuzzuf. Its API gives "jobs/p/<code>-<title>" (no leading slash): joined carelessly that became
-     *  /jobs/p/jobs/p/..., a page that does not exist. */
+    /** The job's page on Wuzzuf. Its API gives a path without a leading slash: "jobs/p/<code>-<title>",
+     *  "internship/<code>-<title>" or "saudi/jobs/p/<code>-<title>". Put under /jobs/p/ again, these became
+     *  /jobs/p/jobs/p/..., /jobs/p/internship/... or /jobs/p/saudi/jobs/p/...: pages that do not exist (404). */
     public static String wuzzufUrl(String uri) {
         String u = uri == null ? "" : uri.trim();
         if (u.isEmpty()) {
@@ -291,9 +291,30 @@ public final class Feed {
         }
         if (!u.startsWith("http")) {
             u = u.replaceFirst("^/+", "");
-            u = "https://wuzzuf.net/" + (u.startsWith("jobs/p/") ? u : "jobs/p/" + u);
+            u = "https://wuzzuf.net/" + (u.contains("/") ? u : "jobs/p/" + u);
         }
-        return u.replaceAll("(/jobs/p)+/jobs/p/", "/jobs/p/").replaceFirst("^http://", "https://");
+        return fixWuzzufPath(u).replaceFirst("^http://", "https://");
+    }
+
+    /** Takes out a /jobs/p/ that was put in front of a full path. */
+    public static String fixWuzzufPath(String url) {
+        String u = url;
+        for (int i = 0; i < 3; i++) {
+            String v = u.replaceAll("/jobs/p/(?=(?:jobs/p|internship|[a-z]{2,12}/jobs/p)/)", "/");
+            if (v.equals(u)) {
+                break;
+            }
+            u = v;
+        }
+        return u;
+    }
+
+    /** "wz:<code>" for a Wuzzuf job page: the code is the start of its last part, before the first "-". */
+    public static String wuzzufId(String url) {
+        String path = url.replaceAll("[?#].*$", "").replaceAll("/+$", "");
+        String last = path.substring(path.lastIndexOf('/') + 1);
+        String code = last.contains("-") ? last.substring(0, last.indexOf('-')) : last;
+        return code.matches("[A-Za-z0-9]{4,}") ? "wz:" + code : "";
     }
 
     private static String nameOf(Object o) {

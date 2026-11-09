@@ -74,19 +74,25 @@ def clean_text(html: Optional[str]) -> str:
 
 
 def job_url(uri: str) -> str:
-    """The job's page. Wuzzuf's API gives "jobs/p/<code>-<title>" (no leading slash); joining it under /jobs/p/ again made
-    /jobs/p/jobs/p/..., a page that does not exist (404)."""
+    """The job's page. Wuzzuf's API gives a path without a leading slash: "jobs/p/<code>-<title>",
+    "internship/<code>-<title>" or "saudi/jobs/p/<code>-<title>". Put under /jobs/p/ again, these became
+    /jobs/p/jobs/p/..., /jobs/p/internship/..., /jobs/p/saudi/jobs/p/...: pages that do not exist (404)."""
     u = (uri or "").strip()
     if not u:
         return ""
     if not u.startswith("http"):
         u = u.lstrip("/")
-        u = f"{BASE}/" + (u if u.startswith("jobs/p/") else f"jobs/p/{u}")
-    return re.sub(r"(/jobs/p)+/jobs/p/", "/jobs/p/", u)
+        u = f"{BASE}/" + (u if "/" in u else f"jobs/p/{u}")
+    for _ in range(3):
+        v = re.sub(r"/jobs/p/(?=(?:jobs/p|internship|[a-z]{2,12}/jobs/p)/)", "/", u)
+        if v == u:
+            break
+        u = v
+    return u
 
 
 def extract_code(url: str) -> str:
-    m = re.search(r"/jobs/p/([A-Za-z0-9_-]+)", url)
+    m = re.search(r"/(?:jobs/p|internship)/([A-Za-z0-9_-]+)", url)
     if m:
         slug = m.group(1)
         return slug.split("-")[0] if "-" in slug else slug

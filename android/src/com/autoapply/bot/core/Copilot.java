@@ -45,8 +45,8 @@ public final class Copilot {
     /** Wuzzuf links saved as /jobs/p/jobs/p/... (a page that does not exist) get their right address. */
     static boolean repair(Map<String, Object> it) {
         String url = Json.str(it, "url");
-        if (url.contains("wuzzuf.net") && url.contains("/jobs/p/jobs/p/")) {
-            it.put("url", Feed.wuzzufUrl(url));
+        if (url.contains("wuzzuf.net") && !Feed.fixWuzzufPath(url).equals(url)) {
+            it.put("url", Feed.fixWuzzufPath(url));
             if (!"wuzzuf".equals(Json.str(it, "channel")) && !"linkedin".equals(Json.str(it, "channel"))) {
                 it.put("channel", "wuzzuf");
             }
@@ -98,7 +98,11 @@ public final class Copilot {
             Map<String, Object> it = items.get(i);
             String src = Json.str(it, "source");
             boolean auto = "feed".equals(src) || "server_match".equals(src);
-            double when = Json.dbl(it, "posted_at", Json.dbl(it, "added", now));
+            double when = Json.dbl(it, "posted_at", 0);
+            if (when <= 0) {   // jobs from the server say "2 months ago"
+                double rel = Feed.relative(Json.str(it, "posted_date"), Json.dbl(it, "added", now));
+                when = rel > 0 ? rel : Json.dbl(it, "added", now);
+            }
             if (auto && "new".equals(Json.str(it, "state")) && when < oldest && Json.str(it, "note").isEmpty()
                     && Json.str(it, "letter").isEmpty()) {
                 items.remove(i);
@@ -145,10 +149,10 @@ public final class Copilot {
                 .replaceAll("([?&])(utm_[a-z]+|gh_src|source|ref|trk|refId|trackingId)=[^&]*", "$1")
                 .replaceAll("\\?&+", "?").replaceAll("&{2,}", "&").replaceAll("[?&]+$", "");
         String low = plain.toLowerCase(Locale.ROOT);
-        if (low.contains("wuzzuf.net/jobs/p/")) {   // a Wuzzuf job: the same ID as the feed gives it
-            String u = Feed.wuzzufUrl(plain.replaceAll("\\?.*$", ""));
-            Matcher code = Pattern.compile("/jobs/p/([A-Za-z0-9]+)").matcher(u);
-            return Json.obj("url", u, "id", "wz:" + (code.find() ? code.group(1) : hash(u)), "channel", "wuzzuf");
+        if (low.contains("wuzzuf.net/") && (low.contains("/jobs/p/") || low.contains("/internship/"))) {   // a Wuzzuf job
+            String u = Feed.fixWuzzufPath(plain.replaceAll("\\?.*$", ""));
+            String id = Feed.wuzzufId(u);
+            return Json.obj("url", u, "id", id.isEmpty() ? "wz:" + hash(u) : id, "channel", "wuzzuf");
         }
         boolean onLinkedIn = low.contains("linkedin.com");
         return Json.obj("url", plain, "id", (onLinkedIn ? "li:" : "c:") + hash(plain), "channel", onLinkedIn ? "linkedin" : "company");

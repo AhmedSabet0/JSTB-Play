@@ -32,6 +32,10 @@ USER_AGENTS = [
 DEFAULT_KEYWORDS = ["Network Engineer", "IT Support Specialist", "System Administrator", "Software Engineer"]
 
 
+class LinkedInBusy(Exception):
+    """LinkedIn answered 429: the rest of this round waits for the next one."""
+
+
 def clean_job_url(raw_url: str) -> str:
     """Strips query tracking parameters, preserving clean job view URL."""
     if not raw_url:
@@ -96,8 +100,8 @@ async def fetch_linkedin_guest_jobs(
                 break
 
             if resp.status_code == 429:
-                logger.warning(f"Rate limited (429) on LinkedIn guest API for {keywords}. Pausing query.")
-                break
+                logger.warning(f"Rate limited (429) on LinkedIn guest API for {keywords}. Pausing until the next round.")
+                raise LinkedInBusy()
             if resp.status_code != 200:
                 logger.warning(f"LinkedIn guest API returned status {resp.status_code} for {keywords}.")
                 break
@@ -342,50 +346,50 @@ def get_user_cv_text(user_id: int) -> str:
     return ""
 
 
+def split_titles(value: str) -> List[str]:
+    """Job titles as the app keeps them: one per line, or separated by ";" (also "," from older versions)."""
+    out: List[str] = []
+    for part in re.split(r"[\r\n,;]+", str(value or "")):
+        t = part.strip()
+        if t and t.lower() not in [x.lower() for x in out]:
+            out.append(t)
+    return out
+
+
 def get_user_keywords(user_id: int) -> List[str]:
-    """Retrieves active search keywords stored for this user.
+    """The job titles to search for this user: the ones set in the app (settings KEYWORDS, the source of truth), else
+    the ones kept before, else roles found in the CV. user_keywords is kept the same as them, one title per row.
 
-    Falls back to settings.KEYWORDS (configured job titles in mobile Profile) or CV text.
-    """
-    c = db.conn()
-    rows = c.execute("SELECT keyword FROM user_keywords WHERE user_id = ?", (user_id,)).fetchall()
-    kws = [r["keyword"].strip() for r in rows if r["keyword"] and r["keyword"].strip()]
-    if kws:
-        return kws
-
-    # Check settings record KEYWORDS (where the mobile app stores job titles from Profile)
-    found = []
+    (The app keeps titles separated by ";": they used to be read as one long title, a search LinkedIn refused.)"""
+    found: List[str] = []
     with db.tx() as t:
         cfg = records.current(t, user_id, "settings", "KEYWORDS")
         if cfg and cfg.get("data") and cfg["data"].get("v"):
-            val = str(cfg["data"]["v"])
-            for line in re.split(r"[\r\n,]+", val):
-                s = line.strip()
-                if s and s not in found:
-                    found.append(s)
-
+            found = split_titles(cfg["data"]["v"])
     if not found:
-        # Check CV text for common roles
+        rows = db.conn().execute("SELECT keyword FROM user_keywords WHERE user_id = ?", (user_id,)).fetchall()
+        for r in rows:
+            for kw in split_titles(r["keyword"]):
+                if kw.lower() not in [x.lower() for x in found]:
+                    found.append(kw)
+    if not found:
         cv = get_user_cv_text(user_id)
         if cv:
             common = ["network engineer", "it support", "devops engineer", "system administrator", "software engineer", "cloud infrastructure"]
             for role in common:
                 if role in cv.lower():
                     found.append(role.title())
-
-    # Persist into user_keywords for fast future matching
-    if found:
-        loc = get_user_location(user_id)
-        now = time.time()
-        with db.tx() as t:
-            for kw in found[:6]:
-                t.execute(
-                    "INSERT OR IGNORE INTO user_keywords(user_id, keyword, location, created_at) VALUES (?, ?, ?, ?)",
-                    (user_id, kw, loc, now),
-                )
-        return found[:6]
-
-    return []
+    found = found[:6]
+    loc = get_user_location(user_id)
+    now = time.time()
+    with db.tx() as t:
+        have = sorted(r["keyword"] for r in t.execute("SELECT keyword FROM user_keywords WHERE user_id = ?", (user_id,)).fetchall())
+        if have != sorted(found):
+            t.execute("DELETE FROM user_keywords WHERE user_id = ?", (user_id,))
+            for kw in found:
+                t.execute("INSERT OR IGNORE INTO user_keywords(user_id, keyword, location, created_at) VALUES (?, ?, ?, ?)",
+                          (user_id, kw, loc, now))
+    return found
 
 
 def get_user_location(user_id: int) -> str:
@@ -619,7 +623,8 @@ async def run_collection_cycle() -> int:
         """
         SELECT DISTINCT keyword, location
         FROM user_keywords
-        LIMIT 50
+        WHERE keyword NOT LIKE '%;%'
+        LIMIT 30
         """
     ).fetchall()
 
@@ -636,8 +641,10 @@ async def run_collection_cycle() -> int:
             jobs = await fetch_linkedin_guest_jobs(kw, loc, total_jobs=25)
             count = await save_and_match_jobs(jobs, kw, loc)
             total_collected += count
-            # Polite pause between keyword searches to avoid rate limiting
-            await asyncio.sleep(random.uniform(3.0, 5.0))
+            # Polite pause between keyword searches: LinkedIn answers 429 to quick ones
+            await asyncio.sleep(random.uniform(10.0, 18.0))
+        except LinkedInBusy:
+            break
         except Exception as e:
             logger.error(f"Error during job collection cycle for '{kw}': {e}", exc_info=True)
 
