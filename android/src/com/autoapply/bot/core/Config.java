@@ -24,7 +24,7 @@ public final class Config {
         {"SKIP_TITLE_WORDS", ""},
         {"NEW_QUESTIONS", "unsure"},   // the AI answers what it is sure about, you the rest
         {"ASK_TIMEOUT_MIN", "10"},
-        {"UPDATE_SOURCE", "AhmedSabet0/JSTB"},
+        {"UPDATE_SOURCE", "AhmedSabet0/JSTB-Play"},
         {"DAILY_GOAL", "10"},
         {"AUTO_UPDATE", "1"},
         {"APPROVE_FIRST", "1"},
@@ -173,9 +173,24 @@ public final class Config {
     }
 
     /** Your CV, for the dashboard. */
+    // The screen asks for the status every second or so: the CV text's length is counted again only when the file changes.
+    private long cvCharsStamp = Long.MIN_VALUE;
+    private int cvChars;
+
+    private int cvChars() {
+        synchronized (lock) {
+            long stamp = cvTextFile.isFile() ? cvTextFile.lastModified() * 31 + cvTextFile.length() : -1;
+            if (stamp != cvCharsStamp) {
+                cvChars = cvText().length();
+                cvCharsStamp = stamp;
+            }
+            return cvChars;
+        }
+    }
+
     public Map<String, Object> status(Map<String, String> cfg) {
         File cv = cvFile(cfg);
-        int chars = cv == null ? 0 : cvText().length();
+        int chars = cv == null ? 0 : cvChars();
         String cvName = cfg.get("CV_NAME");
         return Json.obj("has_cv", cv != null && cv.isFile() && cv.length() > 0,
                 "cv_name", cv == null ? "" : (cvName == null || cvName.isEmpty() ? cv.getName() : cvName), "cv_chars", chars);

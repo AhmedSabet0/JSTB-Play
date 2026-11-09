@@ -1,4 +1,6 @@
-# Builds JSTB, validates on Android emulators, and deploys to Google Play.
+# Builds JSTB, validates on Android emulators, and publishes it.
+# Every push to main makes a GitHub release with JSTB-dev.apk: the development build on your phone finds it within
+# minutes and updates itself. Google Play gets the bundle only when the repository variable PLAY_UPLOAD is "true".
 name: Android Play Store
 
 on:
@@ -74,10 +76,19 @@ jobs:
         id: key
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          DEV_KEYSTORE_BASE64: ${{ secrets.DEV_KEYSTORE_BASE64 }}
           TAG: ${{ steps.v.outputs.tag }}
           AUTO: ${{ steps.v.outputs.auto }}
         run: |
           mkdir -p keystore
+          # The development build must keep one key: Android installs an update only over an app with the same key.
+          if [ -n "$DEV_KEYSTORE_BASE64" ]; then
+            echo "$DEV_KEYSTORE_BASE64" | base64 -d > keystore/dev.jks
+          elif [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > keystore/dev.jks
+          else
+            echo "::warning::No DEV_KEYSTORE_BASE64 secret: JSTB-dev.apk gets a new key, so phones cannot update to it."
+          fi
           if [ -n "$KEYSTORE_BASE64" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > keystore/autoapply.jks
             echo "real=yes" >> "$GITHUB_OUTPUT"
@@ -103,6 +114,21 @@ jobs:
           cp out/JSTB.aab "../dist-play/JSTB-$VERSION_NAME.aab"
           cp out/JSTB.apk "../dist/JSTB-play-universal.apk"
           rm -f keystore/autoapply.jks
+
+      - name: Build the development APK (updates itself from GitHub releases)
+        env:
+          KS_PASS: ${{ secrets.DEV_KS_PASS || secrets.KS_PASS || 'autoapply' }}
+          SERVER_URL: ${{ vars.SERVER_URL || 'https://145-241-153-177.sslip.io' }}
+          VERSION_NAME: ${{ steps.v.outputs.name }}
+          VERSION_CODE: ${{ steps.v.outputs.code }}
+          UPDATE_REPO: ${{ github.repository }}
+        run: |
+          export ANDROID_JAR="$ANDROID_HOME/platforms/android-34/android.jar" BUNDLETOOL="$RUNNER_TEMP/bundletool.jar"
+          export KEYSTORE=keystore/dev.jks
+          [ -f "$KEYSTORE" ] || export NEW_KEY=1
+          DEV=1 APK=1 bash ./build.sh
+          cp out/JSTB.apk "../dist/JSTB-dev.apk"
+          rm -f keystore/dev.jks
 
       - uses: actions/upload-artifact@v4
         with:
@@ -143,7 +169,8 @@ jobs:
           script: bash android/test/smoke.sh apk
 
   release:
-    needs: [build]
+    # After the emulator check: a build that crashes on start would stop phones from ever updating again.
+    needs: [build, check]
     runs-on: ubuntu-24.04
     if: github.ref == 'refs/heads/main'
     steps:
@@ -156,14 +183,16 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.build.outputs.release != '' && needs.build.outputs.release || format('v{0}', needs.build.outputs.name) }}
-          name: JSTB Play Edition ${{ needs.build.outputs.name }}
+          name: JSTB ${{ needs.build.outputs.name }}
           files: dist/*
           generate_release_notes: true
+          make_latest: true   # the development build updates to the latest release
 
   upload-play:
     needs: [build, check]
     runs-on: ubuntu-24.04
-    if: github.ref == 'refs/heads/main'
+    # Off while the app is in development: set the repository variable PLAY_UPLOAD to "true" to send builds to Google Play.
+    if: github.ref == 'refs/heads/main' && vars.PLAY_UPLOAD == 'true'
     steps:
       - uses: actions/download-artifact@v4
         with:

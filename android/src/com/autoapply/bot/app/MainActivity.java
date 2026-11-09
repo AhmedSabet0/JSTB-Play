@@ -259,6 +259,25 @@ public final class MainActivity extends Activity {
         public void liveView() {
         }
 
+        /** Open a job site's sign-in screen: "linkedin" or "wuzzuf". */
+        @JavascriptInterface
+        public void signIn(final String site) {
+            platform.main.post(new Runnable() {
+                @Override
+                public void run() {
+                    if (!destroyed) {
+                        showSignIn(site);
+                    }
+                }
+            });
+        }
+
+        /** {"linkedin": true/false, "wuzzuf": true/false}: the job sites this phone is signed in to. */
+        @JavascriptInterface
+        public String sites() {
+            return Json.stringify(Json.obj("linkedin", platform.signedIn(), "wuzzuf", platform.wuzzufSignedIn()));
+        }
+
         /** Copy an answer, to paste it into a form in another app (LinkedIn). */
         @JavascriptInterface
         public void copy(final String text) {
@@ -392,6 +411,7 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         platform.activityResumed = true;
+        platform.onAppResumed();   // an update that waited for the app (development build)
         Notifs.cancel(this, Notifs.ID_BRIEF);
         js("window.aaResumed && window.aaResumed()");  // back from LinkedIn: did you apply?
         new Thread(new Runnable() {
@@ -437,7 +457,7 @@ public final class MainActivity extends Activity {
             return;
         }
         if (signInPane != null) {
-            closePanes();
+            signInFinished(false);   // like Done: you may have signed in already
             return;
         }
         // Back goes to the previous screen of the app; on the home screen the app goes to the background
@@ -648,8 +668,32 @@ public final class MainActivity extends Activity {
 
     /** LinkedIn's sign-in page. */
     void showSignIn() {
+        showSignIn("linkedin");
+    }
+
+    private String signInSite = "linkedin";
+
+    private static boolean isWuzzuf(Uri u) {
+        String host = u == null ? null : u.getHost();
+        return host != null && (host.equals("wuzzuf.net") || host.endsWith(".wuzzuf.net"));
+    }
+
+    /** Wuzzuf pages only a signed-in job seeker reaches. */
+    private static boolean wuzzufMemberPage(String path) {
+        for (String p : new String[]{"/explore", "/me", "/applications", "/saved", "/recommended", "/profile", "/settings"}) {
+            if (path.startsWith(p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The sign-in page of a job site, in the app (the in-app browser shares its cookies): "linkedin" or "wuzzuf". */
+    void showSignIn(final String site) {
         closePanes();
-        signInPane = pane("Sign in to LinkedIn", "Done", new View.OnClickListener() {
+        final boolean wz = "wuzzuf".equals(site);
+        signInSite = wz ? "wuzzuf" : "linkedin";
+        signInPane = pane(wz ? "Sign in to Wuzzuf" : "Sign in to LinkedIn", "Done", new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 signInFinished(false);
@@ -672,6 +716,13 @@ public final class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 Uri u = Uri.parse(url);
                 String path = u.getPath() == null ? "" : u.getPath();
+                if (wz) {
+                    if (isWuzzuf(u) && wuzzufMemberPage(path)) {
+                        platform.setWuzzufSignedIn(true);
+                        signInFinished(true);
+                    }
+                    return;
+                }
                 if (isLinkedIn(u) && (path.startsWith("/feed") || path.startsWith("/jobs") || path.startsWith("/mynetwork"))
                         && platform.signedIn()) {
                     signInFinished(true);
@@ -680,22 +731,51 @@ public final class MainActivity extends Activity {
         });
         signInPane.addView(signInWeb, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         root.addView(signInPane, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        signInWeb.loadUrl("https://www.linkedin.com/login");
+        signInWeb.loadUrl(wz ? "https://wuzzuf.net/login" : "https://www.linkedin.com/login");
     }
 
-    private void signInFinished(boolean auto) {
+    private void signInFinished(final boolean auto) {
+        if (signInPane == null) {
+            return;   // already closed (a site can finish loading its signed-in page twice)
+        }
         CookieManager.getInstance().flush();
-        boolean ok = platform.signedIn();
+        if ("wuzzuf".equals(signInSite) && !auto && signInWeb != null) {
+            // Done: signed in when the page is Wuzzuf's and has no "Log in" link left (and is not the sign-in form).
+            final Uri u = Uri.parse(signInWeb.getUrl() == null ? "" : signInWeb.getUrl());
+            final String path = u.getPath() == null ? "" : u.getPath();
+            signInWeb.evaluateJavascript("!document.querySelector('a[href*=\"/login\"], input[type=password]')",
+                    new ValueCallback<String>() {
+                        @Override
+                        public void onReceiveValue(String noLogin) {
+                            if (isWuzzuf(u) && ("true".equals(noLogin) || wuzzufMemberPage(path))
+                                    && !path.startsWith("/login") && !path.startsWith("/register") && !path.startsWith("/signup")) {
+                                platform.setWuzzufSignedIn(true);
+                            }
+                            siteSignInDone("wuzzuf", false);
+                        }
+                    });
+            return;
+        }
+        siteSignInDone(signInSite, auto);
+    }
+
+    private void siteSignInDone(String site, boolean auto) {
+        boolean wz = "wuzzuf".equals(site);
+        boolean ok = wz ? platform.wuzzufSignedIn() : platform.signedIn();
         if (auto || ok) {
-            Toast.makeText(this, ok ? "Signed in to LinkedIn." : "Not signed in yet.", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, ok ? (wz ? "Signed in to Wuzzuf." : "Signed in to LinkedIn.") : "Not signed in yet.",
+                    Toast.LENGTH_SHORT).show();
         }
         closePanes();
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                platform.api.handle("/api/signed-in", "{}");
-            }
-        }).start();
+        if (!wz) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    platform.api.handle("/api/signed-in", "{}");
+                }
+            }).start();
+        }
+        dash.evaluateJavascript("window.aaSignedIn && window.aaSignedIn(" + Json.stringify(site) + "," + ok + ")", null);
         dash.evaluateJavascript("window.aaRefresh && window.aaRefresh()", null);
     }
 

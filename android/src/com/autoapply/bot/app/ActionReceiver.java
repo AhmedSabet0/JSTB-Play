@@ -18,11 +18,17 @@ public final class ActionReceiver extends BroadcastReceiver {
     static final String ANSWER = "com.autoapply.bot.ANSWER";
     static final String APPROVE = "com.autoapply.bot.APPROVE";
     static final String SKIP = "com.autoapply.bot.SKIP";
+    /** Android's installer reports on an update of the development build. */
+    static final String UPDATE_STATUS = "com.autoapply.bot.UPDATE_STATUS";
 
     @Override
     public void onReceive(Context context, Intent intent) {
         final AndroidPlatform p = AndroidPlatform.get(context);
         String action = intent.getAction();
+        if (UPDATE_STATUS.equals(action)) {
+            p.onInstallStatus(intent);
+            return;
+        }
         if (STOP.equals(action)) {
             p.engine.stop();
             return;

@@ -612,6 +612,37 @@ details summary { cursor: pointer; color: var(--action); font-size: 14px; margin
   font-size: 15px; box-shadow: 0 6px 24px rgba(10, 20, 40, .25); }
 body.tabs .toast { bottom: calc(92px + env(safe-area-inset-bottom)); }
 .toast.bad { background: var(--error); color: #fff; }
+.toast:not([hidden]) { display: flex; align-items: center; gap: 12px; animation: toastIn .22s cubic-bezier(.2, .8, .2, 1); }
+.toast > span { flex: 1; }
+.toast-act { flex: none; margin: -6px -6px -6px 0; padding: 8px 12px; border: 0; border-radius: var(--r-s); background: transparent;
+  color: var(--action-soft); font: inherit; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; cursor: pointer; }
+.toast-act:active { background: rgba(255, 255, 255, .14); }
+@media (prefers-color-scheme: dark) { .toast-act { color: var(--action-ink); } .toast-act:active { background: rgba(0, 0, 0, .12); } }
+@keyframes toastIn { from { transform: translateY(12px); opacity: 0; } }
+
+/* ---------- moving between screens, closing sheets */
+.view.enter { animation: viewIn .2s ease-out; }
+@keyframes viewIn { from { opacity: 0; transform: translateY(6px); } }
+.sheet-wrap .scrim { transition: opacity .2s; }
+.sheet-wrap.closing .scrim { opacity: 0; }
+.sheet-wrap.closing { pointer-events: none; }
+.grab { touch-action: none; }
+.btn.ghost-danger.armed { background: var(--error-soft); border-color: var(--error); }
+
+/* ---------- Home: the CV is a slim row once there is one */
+.home-cv-panel.compact { padding-top: 14px; padding-bottom: 14px; }
+.home-cv-panel.compact .panel-head { margin-bottom: 8px; }
+.home-cv-panel.compact .drop { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; row-gap: 0; align-items: center;
+  padding: 10px 14px; text-align: left; border-width: 1px; border-radius: var(--r-m); }
+.home-cv-panel.compact .drop svg { grid-row: 1 / 3; width: 28px; height: 28px; }
+.home-cv-panel.compact .drop .cv-title { font-size: 15px; min-width: 0; }
+.home-cv-panel.compact .drop .cv-state { font-size: 13px; line-height: 1.35; min-width: 0; }
+.home-cv-more { margin-top: 8px; }
+.home-cv-more .linklike { font-size: 13.5px; }
+.home-cv-preview { margin-top: 8px; }
+.home-cv-preview summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+.home-cv-preview pre { white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow-y: auto; background: var(--surface-2);
+  padding: 10px; border-radius: var(--r-s); margin-top: 6px; }
 
 /* ------------------------------------------------------------ account */
 .acc-seg { margin: 4px 0 6px; }
@@ -764,8 +795,26 @@ body.tabs .toast { bottom: calc(92px + env(safe-area-inset-bottom)); }
   .answers { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dot.run, .qcard, .scrim, .sheet, .stamp { animation: none; }
-  .ring-fill, .desk-meter i, .tabbar svg { transition: none; }
+  .dot.run, .qcard, .scrim, .sheet, .stamp, .view.enter, .toast { animation: none; }
+  .ring-fill, .desk-meter i, .tabbar svg, .sheet-wrap.closing .scrim { transition: none; }
 }
 
 .logo .arr, .hero-mark .arr { fill: none; stroke: var(--action-ink, #fff); stroke-width: 3.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- sign-ins: Google, LinkedIn, Wuzzuf */
+.site-list { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 14px; }
+#sites-card .site-list { margin: 0; }
+.site-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-m);
+  background: var(--surface); transition: border-color .2s, background .2s; }
+.site-row.done { border-color: color-mix(in srgb, var(--sent) 45%, var(--line)); }
+.site-text { flex: 1; min-width: 0; }
+.site-text b { display: block; font-size: 16px; }
+.site-text small { display: block; color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere; }
+.site-row .btn { flex: none; min-height: 40px; padding: 0 16px; }
+.site-row .ok-tag { flex: none; font-size: 13px; }
+.site-icon { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; }
+.site-icon svg { width: 22px; height: 22px; fill: currentColor; }
+.site-icon.li { background: #0a66c2; color: #fff; }
+.site-icon.wz { background: #0055d9; color: #fff; }
+.site-icon.g { background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); }
+.step[data-step="sites"] .site-row { padding: 16px; }

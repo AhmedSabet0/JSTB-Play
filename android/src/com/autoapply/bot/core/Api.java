@@ -178,8 +178,15 @@ public final class Api {
     }
 
     // ------------------------------------------------------------------ app updates
+    /** The development build updates itself from GitHub; the Google Play build is updated by Google Play. */
     boolean selfUpdates() {
-        return false;
+        return Boolean.TRUE.equals(engine.platform.buildInfo().get("self_update"));
+    }
+
+    /** Settings' update source, or the repo the build was made for. */
+    private String updateSource() {
+        String fromBuild = Json.str(engine.platform.buildInfo(), "update_repo");
+        return Updater.repoOf(engine.config.load().get("UPDATE_SOURCE"), fromBuild);
     }
 
     boolean autoApply() {
@@ -197,21 +204,21 @@ public final class Api {
             last = null;  // already installed
         }
         return Json.obj("current", current, "checking", checking, "last", last, "download", engine.platform.updateState(),
-                "source", engine.config.load().get("UPDATE_SOURCE"));
+                "source", updateSource());
     }
 
-    /** Check in the background (auto checks run at most every 30 minutes). */
+    /** Check in the background (checks by themselves run at most every 5 minutes: GitHub allows 60 an hour). */
     void startUpdateCheck(final boolean force) {
         Map<String, Object> last = lastCheck;
         if (!selfUpdates() || checking) {
             return;
         }
-        if (!force && last != null && Util.now() - Json.dbl(last, "checked_at", 0) < 30 * 60) {
+        if (!force && last != null && Util.now() - Json.dbl(last, "checked_at", 0) < 5 * 60) {
             autoInstall(last);  // checked lately: install what it found, if that was not tried yet
             return;
         }
         checking = true;
-        final String source = engine.config.load().get("UPDATE_SOURCE");
+        final String source = updateSource();
         final String current = Json.str(engine.platform.appVersion(), "name");
         new Thread(new Runnable() {
             @Override
@@ -243,8 +250,7 @@ public final class Api {
             return;
         }
         autoTried = v;
-        Util.log("Version " + v + " is out: downloading it (it installs when the screen turns off"
-                + (engine.running() ? ", between rounds; auto apply starts again after it)" : ")"));
+        Util.log("Version " + v + " is out: downloading it (it installs when you open the app)");
         engine.platform.installUpdate(Json.str(r, "url"), v, true);
     }
 

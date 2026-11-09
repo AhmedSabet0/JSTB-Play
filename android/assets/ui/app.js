@@ -33,13 +33,35 @@
   }
 
   let toastTimer = null;
-  function toast(msg, bad = false) {
+  // toast('Skipped.', false, { label: 'Undo', run: () => … }) adds a button; a toast with one stays a little longer.
+  function toast(msg, bad = false, action = null) {
     const t = $('toast');
-    t.textContent = msg;
+    t.textContent = '';
+    const text = document.createElement('span');
+    text.textContent = msg;
+    t.appendChild(text);
+    if (action && action.label) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'toast-act';
+      b.textContent = action.label;
+      b.addEventListener('click', () => {
+        t.hidden = true;
+        clearTimeout(toastTimer);
+        try { action.run(); } catch (e) { /* the action reports its own errors */ }
+      });
+      t.appendChild(b);
+    }
     t.className = `toast${bad ? ' bad' : ''}`;
     t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { t.hidden = true; }, bad ? 6000 : 3000);
+    toastTimer = setTimeout(() => { t.hidden = true; }, bad ? 6000 : action ? 5000 : 3000);
+  }
+  // Disables a button while an async action runs, so a double tap does not send it twice.
+  async function guarded(btn, fn) {
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    try { await fn(); } finally { btn.disabled = false; }
   }
   function store(key, value) {
     try {
@@ -83,13 +105,21 @@
   const mustUpdate = () => !!(state && state.account && state.account.update && state.account.update.required);
   let view = null;
   const history = [];
+  const scrollMem = {};   // where you were on each screen, so a tab or Back takes you back there
+  const calm = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   function go(v, opts = {}) {
     if (mustUpdate() && v !== 'update') v = 'update';  // too old for the server: only the update screen
+    const prev = view;
+    if (prev) scrollMem[prev] = window.scrollY;
     if (TABS.includes(v) || v === 'setup' || v === 'update') history.length = 0;
     else if (view && view !== v && !opts.back) history.push(view);
     closeSheets();
     view = v;
-    document.querySelectorAll('.view').forEach((s) => { s.hidden = s.id !== `v-${v}`; });
+    document.querySelectorAll('.view').forEach((s) => {
+      const on = s.id === `v-${v}`;
+      s.hidden = !on;
+      if (on && prev !== v && !calm()) { s.classList.remove('enter'); void s.offsetWidth; s.classList.add('enter'); }
+    });
     $('bar-title').textContent = TITLES[v] || 'JSTB';
     const top = TABS.includes(v) || v === 'setup' || v === 'update';
     $('nav-back').hidden = top;
@@ -99,7 +129,11 @@
     $('tabbar').hidden = !tabs;
     document.body.classList.toggle('tabs', tabs);
     document.querySelectorAll('[data-tab]').forEach((b) => b.classList.toggle('on', b.dataset.tab === (TAB_OF[v] || v)));
-    window.scrollTo(0, 0);
+    // Same tab again: back to the top. Another tab, or Back: where you left it. A new screen: the top.
+    const keep = prev !== v && (TABS.includes(v) || opts.back) ? scrollMem[v] || 0 : 0;
+    if (prev === v && window.scrollY > 0) window.scrollTo({ top: 0, behavior: calm() ? 'auto' : 'smooth' });
+    else window.scrollTo(0, keep);
+    if (keep) requestAnimationFrame(() => window.scrollTo(0, keep));   // after the lists paint
     if (v === 'settings') { loadSettings(); loadDrive(); }
     if (v === 'profile') { loadSettings(); renderProfile(); }
     if (v === 'info') loadInfo();
@@ -108,12 +142,13 @@
     if (v === 'tracker') loadTracker();
     if (v === 'home') { loadQueue(true); loadTracker(true); }
     if (v === 'update') renderForceUpdate();
+    if (v === 'log') logLoop();
     if (v === 'log') { const box = $('log'); box.scrollTop = box.scrollHeight; window.scrollTo(0, document.body.scrollHeight); }
     renderBar();
     renderQuestionBar();
   }
   function back() {
-    if (sheetOpen()) { closeSheets(); return true; }
+    if (sheetOpen()) { dismissSheets(); return true; }
     if (view === 'setup') {
       const steps = wSteps();
       const i = steps.indexOf(wStep);
@@ -150,20 +185,31 @@
   // ------------------------------------------------------------------ state
   let state = null;
   let firstState = true;
-  async function refresh() {
+  let stateSig = '';
+  let lastPaint = 0;
+  async function refresh(opts = {}) {
+    let next;
     try {
-      state = await api(document.hidden ? '/api/state?bg=1' : '/api/state');   // bg: not "in use" (no syncs for it)
+      next = await api(document.hidden ? '/api/state?bg=1' : '/api/state');   // bg: not "in use" (no syncs for it)
     } catch (e) {
       return;
     }
+    // Same as last time (apart from the clock): nothing to repaint. A timed poll skips it; a refresh after
+    // something you did always repaints, and so does one every 15 seconds (times like "5 min ago").
+    next.sites = readSites(next);
+    const sig = JSON.stringify(next, (k, v) => (k === 'now' ? 0 : v));
+    const same = sig === stateSig && !firstState;
+    stateSig = sig;
+    state = next;
+    if (same && opts.poll && Date.now() - lastPaint < 15000) return;
+    lastPaint = Date.now();
     document.body.classList.toggle('has-auto', auto());
     document.body.classList.toggle('no-auto', !auto());
     if (firstState) {
       firstState = false;
       if (mustUpdate()) go('update');
       else if (!state.setup || !state.setup.account) startSetup('account');
-      else if (!state.setup.has_cv) startSetup('cv');
-      else if (!state.setup.setup_done) startSetup(wFirst(state.setup));
+      else if (!state.setup.setup_done || !state.setup.has_cv) startSetup(wFirst(state.setup));
       else go('home');
       setTimeout(takePending, 50);
     } else if (mustUpdate() && view !== 'update') {
@@ -193,6 +239,48 @@
     }
     $('info-sub').textContent = state.facts ? `${plural(state.facts, 'answer')} you can reuse, by category` : 'What forms ask about you, by category';
   }
+
+  // ------------------------------------------------------------------ the job sites you sign in to (LinkedIn, Wuzzuf)
+  function readSites(st) {
+    try {
+      if (window.AA && window.AA.sites) return JSON.parse(window.AA.sites());
+    } catch (e) { /* older app: LinkedIn only */ }
+    return { linkedin: !!(st && st.setup && st.setup.signed_in), wuzzuf: false };
+  }
+  const sites = () => (state && state.sites) || { linkedin: false, wuzzuf: false };
+  const SITE_NAMES = { linkedin: 'LinkedIn', wuzzuf: 'Wuzzuf' };
+  function openSiteSignIn(site) {
+    if (window.AA && window.AA.signIn) { window.AA.signIn(site); return; }
+    if (site === 'linkedin') api('/api/linkedin', {}).catch((e) => toast(e.message, true));
+    else toast('Update the app to sign in to Wuzzuf.', true);
+  }
+  document.querySelectorAll('[data-site]').forEach((b) => b.addEventListener('click', () => openSiteSignIn(b.dataset.site)));
+  // Every place that shows the sign-ins: setup and Settings.
+  function paintSites() {
+    const on = sites();
+    document.querySelectorAll('[data-site-row]').forEach((row) => {
+      const k = row.dataset.siteRow;
+      row.classList.toggle('done', !!on[k]);
+      row.querySelector('[data-site]').hidden = !!on[k];
+      row.querySelector('[data-site-ok]').hidden = !on[k];
+    });
+    const a = acc();
+    if ($('site-g-ok')) {
+      $('site-g-ok').hidden = !a.signed_in;
+      $('site-g-btn').hidden = !!a.signed_in;
+      $('site-g-sub').textContent = a.signed_in ? (a.email || 'Signed in') : 'Your JSTB account: AI and your data';
+    }
+  }
+  if ($('site-g-btn')) $('site-g-btn').addEventListener('click', () => startSetup('account'));
+  // Back from a site's sign-in screen (the app tells which, and whether it worked).
+  window.aaSignedIn = async (site, ok) => {
+    await refresh();
+    if (!ok || view !== 'setup' || wStep !== 'sites') return;
+    const on = sites();
+    const left = ['linkedin', 'wuzzuf'].filter((k) => !on[k]);
+    if (!left.length) setTimeout(() => { if (view === 'setup' && wStep === 'sites') wNext(); }, 900);   // both done: go on
+    else toast(`${SITE_NAMES[site]} is connected. Now ${SITE_NAMES[left[0]]}.`);
+  };
 
   // ------------------------------------------------------------------ chic floating notification pill
   let popupPillTimer = null;
@@ -229,19 +317,46 @@
   let lastAccCheck = Date.now();
   let lastLists = 0;
   let lastQuestionSeen = null;
+  // How often the screen asks the app for news: every second while something is going on, every 3 seconds when
+  // nothing is (the screen still updates at once after anything you do), every 20 seconds in the background.
+  let lastTouch = Date.now();
+  ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => { lastTouch = Date.now(); }, { passive: true }));
+  function pollEvery() {
+    if (document.hidden) return 20000;
+    const busyNow = state && (state.running || state.question || (state.sync && state.sync.busy)
+      || ((state.update || {}).download || {}).state === 'downloading');
+    const waiting = view === 'setup' || !$('w-google-wait').hidden;
+    return busyNow || waiting || Date.now() - lastTouch < 10000 ? 1000 : 3000;
+  }
+  let loopTimer = null;
+  let loopBusy = false;
   async function loop() {
-    await refresh();
+    clearTimeout(loopTimer);
+    if (loopBusy) return;   // one at a time: a second caller just waits for this round
+    loopBusy = true;
+    try {
+      await pollOnce();
+    } finally {
+      loopBusy = false;
+      loopTimer = setTimeout(loop, pollEvery());
+    }
+  }
+  async function pollOnce() {
+    await refresh({ poll: true });
     if (state) {
-      const q = state.question;
-      if (q && q.text && q.text !== lastQuestionSeen) {
-        lastQuestionSeen = q.text;
+      const q = state.question;   // {id, question, ...}
+      if (q && q.id && q.id !== lastQuestionSeen && view !== 'home') {   // on Home the card itself shows
+        lastQuestionSeen = q.id;
         showPopupPill({
           type: 'question',
           icon: '❓',
           title: 'Question for Application',
-          sub: q.text,
+          sub: q.question || '',
           actText: 'Answer',
-          onAct: () => { go('questions'); }
+          onAct: () => {   // the question card lives on Home
+            go('home');
+            requestAnimationFrame(() => { if (!$('qcard').hidden) $('qcard').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+          }
         });
       }
     }
@@ -255,7 +370,6 @@
       lastAccCheck = Date.now();
       api('/api/account/refresh', {}).catch(() => {});
     }
-    setTimeout(loop, document.hidden ? 20000 : 1000);  // the app is in the background: barely poll
   }
 
   function renderBar() {
@@ -271,8 +385,11 @@
 
   // ------------------------------------------------------------------ setup wizard
   // The Google Play build needs no LinkedIn sign-in (you apply in the LinkedIn app) and no background work.
-  const wSteps = () => ['account', 'cv', 'answers', 'linkedin', 'done'];
-  const wParts = () => ['account', 'cv', 'answers', 'linkedin'];
+  const wSteps = () => ['account', 'sites', 'cv', 'answers', 'done'];
+  const wParts = () => ['account', 'sites', 'cv', 'answers'];
+  // The job sites step is offered once (and again on a new phone); after that Settings has it.
+  const sitesSeen = () => store('aa-sites-seen') === '1';
+  const sitesAllOn = () => sites().linkedin && sites().wuzzuf;
   let wStep = null;
   let profileData = null;   // GET /api/profile
   let suggest = null;       // read from the CV
@@ -280,9 +397,9 @@
 
   function wFirst(setup) {
     if (!setup.account) return 'account';
+    if (!sitesSeen() && !sitesAllOn()) return 'sites';
     if (!setup.has_cv) return 'cv';
     if (!setup.profile_done) return 'answers';
-    if (!setup.signed_in) return 'linkedin';
     return 'done';
   }
   async function startSetup(step) {
@@ -299,7 +416,7 @@
     wStep = step;
     if (step === 'welcome' && !welcomeInfo && acc().server_built_in && !acc().signed_in) {
       welcomeInfo = true;
-      api('/api/account/info', {}).then((r) => { if (state) state.account = r.account; wLive(); }).catch(() => {});
+      api('/api/account/info', {}).then((r) => { if (state && r.account) state.account = r.account; wLive(); }).catch(() => {});
     }
     document.querySelectorAll('.step').forEach((s) => { s.hidden = s.dataset.step !== step; });
     const parts = wParts();
@@ -313,6 +430,7 @@
       wSugState();
     }
     if (step === 'jobs') wJobs();
+    if (step === 'sites') paintSites();
     wLive();
     window.scrollTo(0, 0);
   }
@@ -328,13 +446,13 @@
     const g1 = wStep === 'welcome' && googleFirst();
     $('w-welcome-acc').textContent = googleFirst() ? 'Sign in with Google' : 'Create your account';
     const labels = { welcome: g1 ? 'Continue with Google' : 'Get started', account: accLabel(), cv: 'Continue', answers: 'Save and continue',
-      jobs: 'Continue', linkedin: s.signed_in ? 'Continue' : 'Skip for now', done: auto() ? 'Start applying' : 'Find jobs' };
+      jobs: 'Continue', sites: sitesAllOn() ? 'Continue' : sites().linkedin || sites().wuzzuf ? 'Continue without the other' : 'Skip for now',
+      done: auto() ? 'Start applying' : 'Find jobs' };
     if (!next.dataset.busy) next.textContent = labels[wStep] || 'Continue';
+    // Nothing signed in yet: the sign-in buttons are the main action, Skip is the quiet one.
+    next.classList.toggle('primary', !(wStep === 'sites' && !sites().linkedin && !sites().wuzzuf));
     next.disabled = (wStep === 'cv' && !s.has_cv) || !!next.dataset.busy;
-    if (wStep === 'linkedin') {
-      $('w-li-ok').hidden = !s.signed_in;
-      $('w-li-btn').hidden = !!s.signed_in;
-    }
+    if (wStep === 'sites') paintSites();
     if (wStep === 'done') {
       permStates(document.querySelector('.step[data-step="done"]'));
       const dr = (state.sync || {}).drive || {};
@@ -351,9 +469,14 @@
       if (wStep === 'welcome' && googleFirst()) await googleStart('welcome');
       else if (wStep === 'welcome') wShow('account');
       else if (wStep === 'account') await wAccount();
+      else if (wStep === 'sites') {
+        store('aa-sites-seen', '1');
+        const s = state.setup;
+        if (s.setup_done && s.has_cv) { go('home'); toast('You are all set.'); }   // a returning user on a new phone
+        else wShow(!s.has_cv ? 'cv' : !s.profile_done ? 'answers' : 'done');
+      }
       else if (wStep === 'cv') wShow('answers');
-      else if (wStep === 'answers') { if (await saveProfile($('w-answers'))) wShow('linkedin'); }
-      else if (wStep === 'linkedin') wShow('done');
+      else if (wStep === 'answers') { if (await saveProfile($('w-answers'))) wShow('done'); }
       else if (wStep === 'done') await finishSetup(auto());
     } catch (e) {
       toast(e.message, true);
@@ -390,7 +513,7 @@
     $('w-email-box').hidden = !em;       // accounts are made and opened with Google only
     $('w-google-box').hidden = false;
     $('w-google').hidden = !em;          // Google only: the big button at the bottom is Continue with Google
-    $('w-or').hidden = !em;
+    if ($('w-or')) $('w-or').hidden = !em;   // the "or" divider is optional in the markup
     $('w-acc-err').hidden = true;
     accHelp();
     wLive();
@@ -419,7 +542,7 @@
   async function loadAccInfo(server) {
     try {
       const r = await api('/api/account/info', server ? { server } : {});
-      state.account = r.account;
+      if (r.account) state.account = r.account;
       setAccMode(accMode);
       if (r.server && r.server.signups_open === false) {
         $('w-acc-note').textContent = 'New accounts are closed right now. You can still sign in.';
@@ -437,15 +560,20 @@
     }
     await refresh();
     busy($('w-next'));
+    const back = restore && ((state.sync || {}).note || '').includes('from your account');
     if (state.setup.setup_done && state.setup.has_cv) {
+      if (!sitesAllOn()) {   // your data is here; this phone still needs the job sites
+        if (view !== 'setup') go('setup');
+        wShow('sites');
+        toast(back ? 'Welcome back. Your CV, answers and jobs are on this phone.' : 'Signed in.');
+        return;
+      }
       go('home');
-      toast(restore && ((state.sync || {}).note || '').includes('from your account')
-        ? 'Welcome back. Your CV, answers and jobs are on this phone.' : 'Signed in.');
+      toast(back ? 'Welcome back. Your CV, answers and jobs are on this phone.' : 'Signed in.');
       return;
     }
     await loadProfile();
-    const first = wFirst(state.setup);
-    wShow(!state.setup.has_cv ? 'cv' : (first === 'welcome' || first === 'account' ? 'cv' : first));
+    wShow(sitesAllOn() ? (!state.setup.has_cv ? 'cv' : wFirst(state.setup)) : 'sites');
     kickSuggest(false);
   }
   async function googleStart(where) {
@@ -885,11 +1013,13 @@
   if (homeCvViewBtn) {
     homeCvViewBtn.addEventListener('click', async () => {
       const box = $('home-cv-preview-box');
-      if (!box.hidden) { box.hidden = true; return; }
+      if (!box.hidden) { box.hidden = true; homeCvViewBtn.textContent = 'View extracted CV text'; return; }
       try {
         const r = await api('/api/cv');
         $('home-cv-preview').textContent = r.text || r.preview || 'No text extracted.';
         box.hidden = false;
+        box.open = true;
+        homeCvViewBtn.textContent = 'Hide extracted CV text';
       } catch (e) {
         toast(e.message, true);
       }
@@ -980,6 +1110,7 @@
     renderRecent((s.recent || []).filter((x) => !inBrief.has(x.id)).slice(0, 5));
     const homeBadge = $('home-cv-badge');
     const homeView = $('home-cv-view-btn');
+    $('home-cv-panel').classList.toggle('compact', !!(s.setup && s.setup.has_cv));   // a slim row once there is a CV
     if (homeBadge) {
       if (s.setup && s.setup.has_cv) {
         homeBadge.textContent = 'Active ✓';
@@ -1016,6 +1147,13 @@
       items.push(['', '<b>Sign in to LinkedIn</b><span>Easy Apply only works from a signed-in account. You sign in once.</span>',
         '<button class="btn primary" data-act="signin" type="button">Sign in to LinkedIn</button>']);
     }
+    // Set up before the job sites joined the setup: ask once, here.
+    const on = s.sites || {};
+    const missing = ['linkedin', 'wuzzuf'].filter((k) => !on[k]);
+    if (s.setup.setup_done && s.setup.account && missing.length && !sitesSeen()) {
+      items.push(['info', `<b>Sign in to ${missing.map((k) => SITE_NAMES[k]).join(' and ')}</b><span>Once, so applying there takes one tap. Your passwords stay with the sites.</span>`,
+        `${missing.map((k) => `<button class="btn primary" data-act="site-${k}" type="button">${SITE_NAMES[k]}</button>`).join('')}<button class="btn" data-act="sites-later" type="button">Later</button>`]);
+    }
     const dr = (s.sync || {}).drive;
     if (dr && dr.connected && dr.reconnect) {
       items.push(['', '<b>Google Drive needs you to connect it again</b><span>Until then your CV, answers and jobs stay in your account, but not in your Drive.</span>',
@@ -1033,8 +1171,11 @@
     }
     const u = s.update || {};
     const dst = (u.download || {}).state;
-    if (!u.disabled && u.last && u.last.available && dst === 'ready') {
-      items.push(['info', `<b>Version ${esc(u.last.version)} is downloaded</b><span>It installs by itself when the screen turns off. Your jobs, answers and sign-ins stay.</span>`,
+    if (!u.disabled && ['permission', 'error', 'confirm'].includes(dst) && (u.download || {}).message) {
+      items.push([dst === 'error' ? '' : 'info', `<b>App update</b><span>${esc(u.download.message)}</span>`,
+        dst === 'confirm' ? '' : '<button class="btn" data-act="install-now" type="button">Try again</button>']);
+    } else if (!u.disabled && u.last && u.last.available && dst === 'ready') {
+      items.push(['info', `<b>Version ${esc(u.last.version)} is downloaded</b><span>Install it now: your jobs, answers and sign-ins stay.</span>`,
         `<button class="btn" data-act="install-now" type="button"${s.running ? ' disabled' : ''}>Install now</button>`]);
     } else if (!u.disabled && u.last && u.last.available && !['downloading', 'installing', 'confirm'].includes(dst)) {
       items.push(['info', `<b>Version ${esc(u.last.version)} is ready</b><span>Your answers and sign-in stay.</span>`,
@@ -1048,6 +1189,8 @@
     box.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () => {
       const a = b.dataset.act;
       if (a === 'setup') startSetup();
+      if (a.startsWith('site-')) openSiteSignIn(a.slice(5));
+      if (a === 'sites-later') { store('aa-sites-seen', '1'); box.dataset.sig = ''; renderBanners(); toast('You find them in Settings, under Sign-ins.'); }
       if (a === 'signin') api('/api/linkedin', {}).catch((e) => toast(e.message, true));
       if (a === 'answers') go('info');
       if (a === 'drive') api('/api/drive/connect', {}).catch((e) => toast(e.message, true));
@@ -1268,13 +1411,20 @@
     while (box.childElementCount > LOG_MAX) box.firstElementChild.remove();
     if (view === 'log' && $('autoscroll').checked) window.scrollTo(0, document.body.scrollHeight);
   }
+  let logTimer = null;
+  let logBusy = false;
   async function logLoop() {
+    clearTimeout(logTimer);
+    if (logBusy) return;
+    logBusy = true;
     try {
       const d = await api(`/api/log?since=${logSeq}`);
       appendLog(d.lines);
       logSeq = d.next;
     } catch (e) { /* app closed */ }
-    setTimeout(logLoop, document.hidden ? 20000 : 1000);
+    logBusy = false;
+    const live = view === 'log' || (state && state.running);
+    logTimer = setTimeout(logLoop, document.hidden ? 30000 : live ? 1000 : 10000);
   }
 
   // ------------------------------------------------------------------ questions for you
@@ -1494,7 +1644,13 @@
     lastHere = Date.now();
     api('/api/here', {}).catch(() => {});
   }
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) { here(); refresh(); } });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    api('/api/update/check', { auto: true }).catch(() => {});   // development build: a new version since? (at most every 5 min)
+    here();
+    loop();      // restarts the timers at the fast pace
+    logLoop();
+  });
   document.addEventListener('pointerdown', here);
 
   // ------------------------------------------------------------------ settings
@@ -1502,9 +1658,11 @@
   const PLAIN_KEYS = ['LOCATION', 'DATE_POSTED', 'PER_HOUR', 'PER_DAY', 'MIN_SCORE', 'ASK_TIMEOUT_MIN', 'UPDATE_SOURCE', 'ABOUT_ME',
     'DAILY_GOAL', 'SEARCH_EVERY_MIN'];
   let settingsInfoAsked = false;
+  let settingsLoaded = false;   // Save sends every field: never before they hold your saved values
   async function loadSettings() {
     try {
       const d = await api('/api/settings');
+      settingsLoaded = true;
       // A field you changed keeps your value until it is saved (the settings are read again on each screen).
       for (const k of PLAIN_KEYS) { const el = $(`s-${k}`); if (el && !el.dataset.dirty) el.value = d[k] == null ? '' : d[k]; }
       for (const k of LIST_KEYS) {
@@ -1527,7 +1685,7 @@
       settingsLive();
       if (!settingsInfoAsked && acc().signed_in && !acc().google) {   // does the server offer Sign in with Google?
         settingsInfoAsked = true;
-        api('/api/account/info', {}).then((r) => { if (state) state.account = r.account; renderAccountCard(); }).catch(() => {});
+        api('/api/account/info', {}).then((r) => { if (state && r.account) state.account = r.account; renderAccountCard(); }).catch(() => {});
       }
     } catch (e) { toast(e.message, true); }
   }
@@ -1537,7 +1695,7 @@
     $('settings-running').hidden = !state.running;
     renderAccountCard();
     renderDataCard();
-    $('li-state').textContent = s.signed_in ? 'Signed in' : 'Not signed in';
+    paintSites();
     cvStates();
   }
   $('s-MIN_SCORE').addEventListener('input', () => { $('min-score-val').textContent = `${$('s-MIN_SCORE').value}/10`; });
@@ -1548,7 +1706,9 @@
     if (chips) chips.dataset.dirty = '1';
     else if (t.id && /^s-[A-Z_]+$/.test(t.id)) t.dataset.dirty = '1';
   }));
-  document.querySelectorAll('.save-settings').forEach((btn) => btn.addEventListener('click', async () => {
+  document.querySelectorAll('.save-settings').forEach((btn) => btn.addEventListener('click', () => guarded(btn, async () => {
+    if (!settingsLoaded) await loadSettings();
+    if (!settingsLoaded) { toast('Could not read your settings, so nothing was changed. Try again.', true); return; }
     const body = {};
     for (const k of PLAIN_KEYS) { const el = $(`s-${k}`); if (el) body[k] = el.value; }
     for (const k of LIST_KEYS) body[k] = $(`s-${k}`).value;
@@ -1566,7 +1726,7 @@
       refresh();
       loadQueue(true);  // new searches for new job titles
     } catch (e) { toast(e.message, true); }
-  }));
+  })));
   $('btn-save-answers').addEventListener('click', async () => {
     try { if (await saveProfile($('s-answers'))) { paintMainCount(); loadFacts(); } } catch (e) { toast(e.message, true); }
   });
@@ -2073,18 +2233,23 @@
     return chanTag(j) + fitBadge;
   }
 
-  let prevQueueCount = -1;
-  async function loadQueue(quiet) {
+  let knownIds = null;   // jobs already seen: the pill is only for jobs that came in by themselves
+  function rememberJobs() {
+    if (!knownIds) knownIds = new Set();
+    queue.forEach((x) => knownIds.add(x.id));
+  }
+  async function loadQueue(quiet, opts = {}) {
     try {
       const d = await api('/api/copilot');
-      const prev = prevQueueCount;
+      const first = !knownIds;
       queue = d.items || [];
-      prevQueueCount = queue.length;
+      const fresh = first || opts.noPill ? [] : queue.filter((x) => x.state === 'new' && !knownIds.has(x.id));
+      rememberJobs();
       searchLinks = d.search_links || [];
       searchWhere = d.location || '';
       paintQueue();
-      if (prev >= 0 && queue.length > prev) {
-        const newest = queue[0];
+      if (fresh.length) {
+        const newest = fresh[0];
         if (newest) {
           showPopupPill({
             type: 'job',
@@ -2178,6 +2343,7 @@
       input.value = '';
       input.blur();
       queue = r.items || queue;
+      rememberJobs();
       paintQueue();
       toast(r.item.again ? 'Already in your jobs.' : 'Added to your jobs.');
       openSheet(r.item.id);
@@ -2218,16 +2384,70 @@
   // ------------------------------------------------------------------ the job sheet
   let sheetId = null;
   const sheetOpen = () => !$('sheet').hidden || !$('ask').hidden;
+  let closeTimer = null;
   function closeSheets() {
-    $('sheet').hidden = true;
-    $('ask').hidden = true;
+    flushNote(false);
+    clearTimeout(closeTimer);
+    closeTimer = null;
+    ['sheet', 'ask'].forEach((w) => {
+      $(w).hidden = true;
+      $(w).classList.remove('closing');
+      $(w).querySelector('.sheet').style.transform = '';
+      $(w).querySelector('.sheet').style.transition = '';
+    });
     sheetId = null;
     document.body.style.overflow = '';
   }
-  document.querySelectorAll('.sheet-wrap [data-close]').forEach((x) => x.addEventListener('click', closeSheets));
+  // You closed it (scrim, Back, swipe down): it slides away first.
+  function dismissSheets() {
+    if (!sheetOpen() || closeTimer) return;
+    if (calm()) { closeSheets(); return; }
+    ['sheet', 'ask'].forEach((w) => {
+      if ($(w).hidden) return;
+      $(w).classList.add('closing');
+      const sh = $(w).querySelector('.sheet');
+      sh.style.transition = 'transform .2s cubic-bezier(.4, 0, 1, 1)';
+      sh.style.transform = 'translateY(100%)';   // from where a drag left it
+    });
+    closeTimer = setTimeout(closeSheets, 200);
+  }
+  document.querySelectorAll('.sheet-wrap [data-close]').forEach((x) => x.addEventListener('click', dismissSheets));
+  // Drag a sheet down by its handle or its top (or anywhere once it is scrolled to the top) to close it.
+  document.querySelectorAll('.sheet-wrap .sheet').forEach((sh) => {
+    const body = sh.querySelector('.sheet-body');
+    let y0 = null;
+    let dy = 0;
+    let t0 = 0;
+    sh.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1 || e.target.closest('input, textarea, select, .sheet-foot')) { y0 = null; return; }
+      if (body.scrollTop > 0 && !e.target.closest('.grab')) { y0 = null; return; }
+      y0 = e.touches[0].clientY;
+      dy = 0;
+      t0 = Date.now();
+    }, { passive: true });
+    sh.addEventListener('touchmove', (e) => {
+      if (y0 == null) return;
+      dy = e.touches[0].clientY - y0;
+      if (dy <= 0) { sh.style.transform = ''; return; }
+      if (e.cancelable) e.preventDefault();   // the sheet moves, not the list behind it
+      sh.style.transition = 'none';
+      sh.style.transform = `translateY(${dy}px)`;
+    }, { passive: false });
+    sh.addEventListener('touchend', () => {
+      if (y0 == null) return;
+      y0 = null;
+      sh.style.transition = '';
+      const fast = dy > 40 && dy / Math.max(1, Date.now() - t0) > 0.6;
+      if (dy > Math.min(140, sh.offsetHeight / 3) || fast) dismissSheets();
+      else sh.style.transform = '';
+    });
+  });
   function openSheet(id) {
     if (!findJob(id)) return;
-    $('ask').hidden = true;
+    closeSheets();
+    removeArmed = null;
+    $('sh-remove').textContent = 'Remove from my jobs';
+    $('sh-remove').classList.remove('armed');
     sheetId = id;
     $('sheet').hidden = false;
     document.body.style.overflow = 'hidden';
@@ -2364,11 +2584,29 @@
     const j = findJob(sheetId);
     if (j && j.letter) { copyText(j.letter); toast('Copied the cover letter.'); }
   });
-  $('sh-note').addEventListener('change', () => {
-    const id = sheetId;
-    api('/api/copilot/update', { id, note: $('sh-note').value }).then((r) => { queue = r.items || queue; toast('Note saved.'); })
+  // The note belongs to the job it was typed for, even when the sheet closes (Back, swipe) before the field loses focus.
+  let noteDraft = null;   // { id, text, timer }
+  function flushNote(quiet) {
+    const d = noteDraft;
+    if (!d) return;
+    noteDraft = null;
+    clearTimeout(d.timer);
+    const j = findJob(d.id);
+    if (!j || (j.note || '') === d.text) return;
+    j.note = d.text;
+    api('/api/copilot/update', { id: d.id, note: d.text }).then((r) => { queue = r.items || queue;
+      rememberJobs(); if (!quiet) toast('Note saved.'); })
       .catch((e) => toast(e.message, true));
+  }
+  $('sh-note').addEventListener('input', () => {
+    if (!sheetId) return;
+    if (noteDraft && noteDraft.id !== sheetId) flushNote(true);
+    if (!noteDraft) noteDraft = { id: sheetId, text: '', timer: null };
+    noteDraft.text = $('sh-note').value;
+    clearTimeout(noteDraft.timer);
+    noteDraft.timer = setTimeout(() => flushNote(true), 1200);
   });
+  $('sh-note').addEventListener('change', () => flushNote(false));
 
   let awaiting = null;  // a job you went to apply to in the LinkedIn app
   $('sh-open').addEventListener('click', async () => {
@@ -2388,36 +2626,73 @@
       } catch (e) { toast(e.message, true); }
     });
   }
-  $('sh-skip').addEventListener('click', async () => {
+  // Puts a job back where it was (Undo in the toast).
+  async function setJobState(id, st, msg) {
+    try {
+      const r = await api('/api/copilot/update', { id, state: st });
+      queue = r.items || queue;
+      rememberJobs();
+      paintQueue();
+      if (msg) toast(msg);
+      refresh();
+    } catch (e) { toast(e.message, true); }
+  }
+  function skippedToast(id) {
+    toast('Skipped. It waits under Skipped.', false, { label: 'Undo', run: () => setJobState(id, 'new', 'Back in To apply.') });
+  }
+  $('sh-skip').addEventListener('click', (ev) => guarded(ev.currentTarget, async () => {
     const j = findJob(sheetId);
     if (!j) return;
     const back = j.state === 'skipped';
     try {
       const r = await api('/api/copilot/update', { id: j.id, state: back ? 'new' : 'skipped' });
       queue = r.items || queue;
-      closeSheets();
+      rememberJobs();
+      dismissSheets();
       paintQueue();
-      toast(back ? 'Back in To apply.' : 'Skipped. It waits under Skipped.');
+      if (back) toast('Back in To apply.'); else skippedToast(j.id);
       refresh();
     } catch (e) { toast(e.message, true); }
-  });
-  $('sh-remove').addEventListener('click', async () => {
+  }));
+  // Removing cannot be undone, so it asks for a second tap.
+  let removeArmed = null;
+  $('sh-remove').addEventListener('click', (ev) => {
+    const btn = ev.currentTarget;
     const id = sheetId;
-    try {
-      const r = await api('/api/copilot/remove', { id });
-      queue = r.items || queue;
-      closeSheets();
-      paintQueue();
-      toast('Removed from your jobs.');
-      refresh();
-    } catch (e) { toast(e.message, true); }
+    if (removeArmed !== id) {
+      removeArmed = id;
+      btn.textContent = 'Tap again to remove it';
+      btn.classList.add('armed');
+      setTimeout(() => {
+        if (removeArmed !== id) return;
+        removeArmed = null;
+        btn.textContent = 'Remove from my jobs';
+        btn.classList.remove('armed');
+      }, 3500);
+      return;
+    }
+    removeArmed = null;
+    btn.textContent = 'Remove from my jobs';
+    btn.classList.remove('armed');
+    guarded(btn, async () => {
+      try {
+        const r = await api('/api/copilot/remove', { id });
+        queue = r.items || queue;
+      rememberJobs();
+        dismissSheets();
+        paintQueue();
+        toast('Removed from your jobs.');
+        refresh();
+      } catch (e) { toast(e.message, true); }
+    });
   });
-  $('sh-applied').addEventListener('click', () => markApplied(sheetId));
+  $('sh-applied').addEventListener('click', (ev) => guarded(ev.currentTarget, () => markApplied(sheetId)));
 
   async function markApplied(id) {
     try {
       const r = await api('/api/copilot/update', { id, state: 'applied' });
       queue = r.items || queue;
+      rememberJobs();
       paintQueue();
       await refresh();
       showSent(id);
@@ -2456,19 +2731,21 @@
     $('ask').hidden = false;
     document.body.style.overflow = 'hidden';
   }
-  $('ask-yes').addEventListener('click', () => markApplied(askId));
+  $('ask-yes').addEventListener('click', (ev) => guarded(ev.currentTarget, () => markApplied(askId)));
   $('ask-later').addEventListener('click', () => { const id = askId; closeSheets(); openSheet(id); });
-  $('ask-skip').addEventListener('click', async () => {
+  $('ask-skip').addEventListener('click', (ev) => guarded(ev.currentTarget, async () => {
+    const id = askId;
     try {
-      const r = await api('/api/copilot/update', { id: askId, state: 'skipped' });
+      const r = await api('/api/copilot/update', { id, state: 'skipped' });
       queue = r.items || queue;
+      rememberJobs();
       paintQueue();
-      toast('Skipped. It waits under Skipped.');
+      skippedToast(id);
     } catch (e) { toast(e.message, true); }
-    closeSheets();
-  });
+    dismissSheets();
+  }));
   $('ask-next').addEventListener('click', () => { const id = $('ask-next').dataset.id; closeSheets(); openSheet(id); });
-  $('ask-done').addEventListener('click', closeSheets);
+  $('ask-done').addEventListener('click', dismissSheets);
 
   // Back from the LinkedIn app, or from a company's site in the app's browser.
   let googleLinking = false;   // back from adding Google to this account: show it
@@ -2485,12 +2762,12 @@
     if (awaiting && Date.now() - awaiting.at > 3000) {
       const id = awaiting.id;
       awaiting = null;
-      loadQueue(true).then(() => showAsk(id));
+      loadQueue(true, { noPill: true }).then(() => showAsk(id));
     }
     refresh();
   };
   window.aaBrowserClosed = async (id, applied) => {
-    await loadQueue(true);
+    await loadQueue(true, { noPill: true });
     await refresh();
     if (!id) return;
     if (applied) { showSent(id); loadTracker(true); } else showAsk(id);
@@ -2507,7 +2784,7 @@
     if (d.ok === false) { toast(d.error || 'That share had no job link.', true); return; }
     if (!d.item) return;
     if (!state || !state.setup.setup_done || mustUpdate()) { toast('Saved to your jobs. Finish the setup to apply.'); return; }
-    await loadQueue(true);
+    await loadQueue(true, { noPill: true });
     if (view !== 'queue') go('queue');
     openSheet(d.item.id);
     toast(d.item.again ? 'Already in your jobs.' : 'Added to your jobs.');
@@ -2639,7 +2916,6 @@
   // ------------------------------------------------------------------ start
   window.aaRefresh = () => { refresh(); if (view === 'settings') loadSettings(); };
   window.aaShow = (v) => go(v === 'dashboard' ? 'home' : v);
-  setTimeout(() => { if (state && state.setup.setup_done) { loadQueue(true); loadTracker(true); } }, 400);
   setTimeout(() => api('/api/update/check', { auto: true }).catch(() => {}), 1500);
   loop();
   logLoop();

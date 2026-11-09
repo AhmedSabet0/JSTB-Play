@@ -44,9 +44,9 @@
       <p class="lead" data-auto>Answer a few questions once. Then the app applies to LinkedIn Easy Apply jobs that fit your CV, in the background, and tells you what it sent. Jobs you share to it get help too.</p>
       <ul class="plain-list">
         <li><span><b id="w-welcome-acc">Sign in with Google</b> (connects AI and syncs your data)</span></li>
+        <li><span><b>Sign in to LinkedIn and Wuzzuf</b> so applying there takes one tap</span></li>
         <li><span><b>Add your CV</b></span></li>
         <li><span><b>Answer key questions</b> like expected salary</span></li>
-        <li data-auto><span><b>Sign in to LinkedIn</b></span></li>
       </ul>
       <p class="muted">Takes about 2 minutes.</p>
       <p id="w-welcome-wait" class="note" hidden>Choose your Google account, then come back here.</p>
@@ -128,13 +128,24 @@
       </div>
     </div>
 
-    <div class="step" data-step="linkedin">
-      <h1>Sign in to LinkedIn</h1>
-      <p class="lead">LinkedIn only takes Easy Apply applications from a signed-in account, so this step is needed once. The app remembers it.</p>
-      <div id="w-li-ok" class="done-badge" hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4z"/></svg>Signed in to LinkedIn</div>
-      <button id="w-li-btn" class="btn primary wide" data-signin type="button">Sign in to LinkedIn</button>
-      <p class="hint">Use your email and password. "Sign in with Google" does not work inside apps.</p>
+    <div class="step" data-step="sites">
+      <h1>Sign in to the job sites</h1>
+      <p class="lead">Sign in once and the app applies and fills forms on these sites for you. It remembers you; your passwords stay with the sites.</p>
+      <div class="site-list" id="w-sites">
+        <div class="site-row" data-site-row="linkedin">
+          <span class="site-icon li"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 20.5h-3.6v-5.6c0-1.3 0-3-1.8-3s-2.1 1.4-2.1 2.9v5.7H9.3V9h3.4v1.6h.1c.5-.9 1.6-1.8 3.4-1.8 3.6 0 4.3 2.4 4.3 5.5v6.2zM5.3 7.4a2.1 2.1 0 1 1 0-4.2 2.1 2.1 0 0 1 0 4.2zM7.1 20.5H3.6V9h3.5v11.5z"/></svg></span>
+          <div class="site-text"><b>LinkedIn</b><small data-site-sub>Easy Apply jobs</small></div>
+          <button class="btn primary" data-site="linkedin" type="button">Sign in</button>
+          <span class="ok-tag" data-site-ok="linkedin" hidden>✓ Signed in</span>
+        </div>
+        <div class="site-row" data-site-row="wuzzuf">
+          <span class="site-icon wz"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h3.2l2.3 9.3L11 5h2l2.5 9.3L17.8 5H21l-4 14h-3l-2-7.6L10 19H7z"/></svg></span>
+          <div class="site-text"><b>Wuzzuf</b><small data-site-sub>Jobs in Egypt</small></div>
+          <button class="btn primary" data-site="wuzzuf" type="button">Sign in</button>
+          <span class="ok-tag" data-site-ok="wuzzuf" hidden>✓ Signed in</span>
+        </div>
+      </div>
+      <p class="hint">Use your email and password: "Sign in with Google" does not work inside apps. You can do this later from Settings.</p>
     </div>
 
     <div class="step" data-step="done">
@@ -218,22 +229,6 @@
 
     <div id="banners"></div>
 
-    <section class="panel home-cv-panel" id="home-cv-panel">
-      <div class="panel-head">
-        <h2>Your CV</h2>
-        <span id="home-cv-badge" class="tag"></span>
-      </div>
-      <label class="drop small-drop" id="home-cv-drop" for="h-cv-file">
-        <input id="h-cv-file" class="cv-input" type="file" accept=".pdf,.txt,application/pdf,text/plain">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5zM12 11l-4 4h3v4h2v-4h3z"/></svg>
-        <b class="cv-title">Choose your CV</b>
-        <span class="cv-state muted">PDF or .txt</span>
-      </label>
-      <div style="margin-top: 10px; display: flex; align-items: center; justify-content: space-between;">
-        <button id="home-cv-view-btn" class="linklike" type="button" style="font-size: 13.5px;" hidden>View extracted CV text</button>
-      </div>
-      <details id="home-cv-preview-box" hidden style="margin-top: 8px;"><summary style="cursor: pointer; color: var(--ink-2); font-size: 13px;">Extracted text (tap to collapse)</summary><pre id="home-cv-preview" style="white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow-y: auto; background: var(--surface-2); padding: 10px; border-radius: var(--r-s); margin-top: 6px;"></pre></details>
-    </section>
 
     <section id="ready-panel" class="panel attention ready-panel" data-auto hidden aria-labelledby="ready-title">
       <div class="panel-head"><h2 id="ready-title">Ready to send</h2><span id="ready-n" class="count" hidden></span></div>
@@ -308,6 +303,23 @@
       <button type="button" data-go="tracker"><b id="c-total">0</b><span>all time</span></button>
     </div>
 
+    <section class="panel home-cv-panel" id="home-cv-panel">
+      <div class="panel-head">
+        <h2>Your CV</h2>
+        <span id="home-cv-badge" class="tag"></span>
+      </div>
+      <label class="drop small-drop" id="home-cv-drop" for="h-cv-file">
+        <input id="h-cv-file" class="cv-input" type="file" accept=".pdf,.txt,application/pdf,text/plain">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5zM12 11l-4 4h3v4h2v-4h3z"/></svg>
+        <b class="cv-title">Choose your CV</b>
+        <span class="cv-state muted">PDF or .txt</span>
+      </label>
+      <div class="home-cv-more">
+        <button id="home-cv-view-btn" class="linklike" type="button" hidden>View extracted CV text</button>
+      </div>
+      <details id="home-cv-preview-box" class="home-cv-preview" hidden><summary>Extracted text (tap to collapse)</summary><pre id="home-cv-preview"></pre></details>
+    </section>
+
     <section class="panel" data-auto>
       <div class="panel-head"><h2 id="brief-title">This session</h2><button class="linklike" data-go="jobs" type="button">Auto apply history</button></div>
       <p id="brief-time" class="muted small brief-time"></p>
@@ -373,7 +385,7 @@
       <button class="menu-row" data-go="info" type="button"><span>Your info<small id="info-sub">What forms ask about you, by category</small></span><b id="open-badge" class="count" hidden></b></button>
       <button class="menu-row" data-go="log" type="button"><span>Activity<small>What the app did, step by step</small></span></button>
       <button class="menu-row" data-go="jobs" type="button" data-auto><span>Auto apply history<small>Applied, skipped and why</small></span></button>
-      <button class="menu-row" data-go="settings" type="button"><span>Settings<small>Account, updates, help</small></span></button>
+      <button class="menu-row" data-go="settings" type="button"><span>Settings<small>Sign-ins, account, updates, help</small></span></button>
     </section>
 
     <section class="panel">
@@ -478,6 +490,30 @@
       <button class="btn primary wide save-settings" type="button">Save</button>
     </section>
 
+    <section class="panel" id="sites-card">
+      <div class="panel-head"><h2>Sign-ins</h2></div>
+      <div class="site-list">
+        <div class="site-row">
+          <span class="site-icon g"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.3zM12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22zM6.4 14a6 6 0 0 1 0-3.9V7.5H3.1a10 10 0 0 0 0 9zM12 5.9c1.5 0 2.8.5 3.8 1.5l2.9-2.9A10 10 0 0 0 3.1 7.5L6.4 10C7.2 7.7 9.4 5.9 12 5.9z"/></svg></span>
+          <div class="site-text"><b>Google</b><small id="site-g-sub">Your JSTB account</small></div>
+          <button class="btn primary" id="site-g-btn" type="button" hidden>Sign in</button>
+          <span class="ok-tag" id="site-g-ok" hidden>✓ Signed in</span>
+        </div>
+        <div class="site-row" data-site-row="linkedin">
+          <span class="site-icon li"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 20.5h-3.6v-5.6c0-1.3 0-3-1.8-3s-2.1 1.4-2.1 2.9v5.7H9.3V9h3.4v1.6h.1c.5-.9 1.6-1.8 3.4-1.8 3.6 0 4.3 2.4 4.3 5.5v6.2zM5.3 7.4a2.1 2.1 0 1 1 0-4.2 2.1 2.1 0 0 1 0 4.2zM7.1 20.5H3.6V9h3.5v11.5z"/></svg></span>
+          <div class="site-text"><b>LinkedIn</b><small data-site-sub>Easy Apply jobs</small></div>
+          <button class="btn primary" data-site="linkedin" type="button">Sign in</button>
+          <span class="ok-tag" data-site-ok="linkedin" hidden>✓ Signed in</span>
+        </div>
+        <div class="site-row" data-site-row="wuzzuf">
+          <span class="site-icon wz"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h3.2l2.3 9.3L11 5h2l2.5 9.3L17.8 5H21l-4 14h-3l-2-7.6L10 19H7z"/></svg></span>
+          <div class="site-text"><b>Wuzzuf</b><small data-site-sub>Jobs in Egypt</small></div>
+          <button class="btn primary" data-site="wuzzuf" type="button">Sign in</button>
+          <span class="ok-tag" data-site-ok="wuzzuf" hidden>✓ Signed in</span>
+        </div>
+      </div>
+    </section>
+
     <section class="panel" id="account-card">
       <div class="panel-head"><h2>Account</h2><span id="acc-state" class="tag"></span></div>
       <p id="acc-who" class="acc-who"></p>
@@ -542,10 +578,6 @@
       </div>
     </section>
 
-    <section class="panel" data-auto>
-      <div class="panel-head"><h2>LinkedIn</h2><span id="li-state" class="muted small"></span></div>
-      <button class="btn wide" data-signin type="button">Sign in to LinkedIn again</button>
-    </section>
 
     <section class="panel" id="update-card">
       <div class="panel-head"><h2>App updates</h2><span id="app-version" class="muted small"></span></div>
@@ -560,10 +592,10 @@
         <button id="btn-update-install" class="btn primary" type="button" hidden>Download and install</button>
       </div>
       <label class="check auto-update"><input type="checkbox" id="s-AUTO_UPDATE">
-        <span>Update by itself<small>New versions download on their own and install when the screen turns off.</small></span></label>
+        <span>Update by itself<small>A new version downloads on its own and installs when you open the app.</small></span></label>
       <div class="field update-source">
         <label for="s-UPDATE_SOURCE">Update source</label>
-        <input id="s-UPDATE_SOURCE" type="text" spellcheck="false" placeholder="AhmedSabet0/JSTB">
+        <input id="s-UPDATE_SOURCE" type="text" spellcheck="false" placeholder="AhmedSabet0/JSTB-Play">
         <p class="hint">A GitHub repo (owner/name) or a link to latest.json. Updates keep your answers, settings and sign-ins.</p>
       </div>
     </section>
