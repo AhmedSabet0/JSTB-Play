@@ -14,12 +14,12 @@ import java.util.Map;
 /** Buttons in the notifications: Stop, an option, a suggestion, or an inline reply to a question; Apply, Skip and Apply
  *  all for applications filled up to Submit. */
 public final class ActionReceiver extends BroadcastReceiver {
-    static final String STOP = "com.autoapply.bot.STOP";
-    static final String ANSWER = "com.autoapply.bot.ANSWER";
-    static final String APPROVE = "com.autoapply.bot.APPROVE";
-    static final String SKIP = "com.autoapply.bot.SKIP";
+    static final String STOP = "com.jstb.STOP";
+    static final String ANSWER = "com.jstb.ANSWER";
+    static final String APPROVE = "com.jstb.APPROVE";
+    static final String SKIP = "com.jstb.SKIP";
     /** Android's installer reports on an update of the development build. */
-    static final String UPDATE_STATUS = "com.autoapply.bot.UPDATE_STATUS";
+    static final String UPDATE_STATUS = "com.jstb.UPDATE_STATUS";
 
     @Override
     public void onReceive(Context context, Intent intent) {

@@ -503,7 +503,7 @@ public final class Api {
         }
         if (p.equals("/api/update/store")) {
             String url = Json.str(Json.map(engine.account.info().get("update")), "play_url");
-            engine.platform.openLink(url.isEmpty() ? "https://play.google.com/store/apps/details?id=com.autoapply.bot" : url,
+            engine.platform.openLink(url.isEmpty() ? "https://play.google.com/store/apps/details?id=com.jstb" : url,
                     "store", "", "");
             return Json.obj("ok", true);
         }

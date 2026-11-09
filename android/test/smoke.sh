@@ -4,15 +4,15 @@
 set -u
 DIST=${1:-dist}
 APK=$(ls "$DIST"/*.apk | head -n 1)
-PKG=com.autoapply.bot
+PKG=com.jstb
 echo "Installing $APK"
 adb install -r "$APK" || { echo "::error::Android refused to install the APK"; exit 1; }
 adb logcat -c || true
-adb shell am start -W -n "$PKG/.app.MainActivity"
+adb shell am start -W -n "$PKG/com.autoapply.bot.app.MainActivity"
 sleep 25
 adb shell input keyevent KEYCODE_HOME
 sleep 3
-adb shell am start -W -n "$PKG/.app.MainActivity"
+adb shell am start -W -n "$PKG/com.autoapply.bot.app.MainActivity"
 sleep 10
 PID=$(adb shell pidof "$PKG" | tr -d '\r')
 adb logcat -d -b crash > "$DIST/crash.txt" 2>/dev/null || true

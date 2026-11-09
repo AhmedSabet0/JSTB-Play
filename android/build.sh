@@ -65,7 +65,7 @@ public final class BuildConfig {
     public static final boolean SELF_UPDATE = $SELF_UPDATE;
     public static final String UPDATE_REPO = "$UPDATE_REPO";
     public static final String SERVER_URL = "$SERVER_URL";
-    public static final String FILES_AUTHORITY = "com.autoapply.bot.files";
+    public static final String FILES_AUTHORITY = "com.jstb.files";
 
     private BuildConfig() {
     }
@@ -81,7 +81,7 @@ compile_java() {
 # Android App Bundle (resources in protobuf format from aapt2, assembled by bundletool)
 "$AAPT2" compile --dir "$OUT/res" -o "$OUT/res.zip"
 "$AAPT2" link --proto-format -o "$OUT/base-proto.apk" -I "$ANDROID_JAR" --manifest "$OUT/AndroidManifest.xml" \
-  -A "$OUT/assets" --java "$OUT/gen" --auto-add-overlay "$OUT/res.zip"
+  -A "$OUT/assets" --java "$OUT/gen" --custom-package com.autoapply.bot --auto-add-overlay "$OUT/res.zip"
 compile_java
 
 mkdir -p "$OUT/module"
