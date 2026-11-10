@@ -14,11 +14,17 @@ public class FeedCheck {
         String[] titles = {"Network Engineer", "DevOps Engineer"};
         int bad = 0;
         for (String t : titles) {
-            Thread.sleep(3000);   // as the phone does: LinkedIn answers "busy" to quick searches
+            Thread.sleep(8000);   // as the phone does: LinkedIn answers "busy" to quick searches
             try {
-                List<Map<String, Object>> easy = Feed.linkedin(t, "Egypt", true);
-                Thread.sleep(3000);
-                List<Map<String, Object>> li = Feed.markApply(easy, Feed.linkedin(t, "Egypt", false));
+                List<Map<String, Object>> all = Feed.linkedin(t, "Egypt", false);
+                Thread.sleep(8000);
+                List<Map<String, Object>> easy = new java.util.ArrayList<Map<String, Object>>();
+                try {
+                    easy = Feed.linkedin(t, "Egypt", true);
+                } catch (Exception e) {
+                    notice("LinkedIn Easy Apply search '" + t + "' failed (jobs kept, untagged): " + e);
+                }
+                List<Map<String, Object>> li = Feed.markApply(easy, all);
                 int ext = 0;
                 for (Map<String, Object> j : li) {
                     ext += "external".equals(Json.str(j, "apply")) ? 1 : 0;

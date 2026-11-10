@@ -101,20 +101,32 @@ public final class Feed {
             List<Map<String, Object>> found = new ArrayList<Map<String, Object>>();
             int failures = 0;
             boolean linkedinBusy = false;
+            boolean easyBusy = false;
             for (String title : titles) {
                 if (!linkedinBusy) {
-                    try {   // Easy Apply ones first, then all: the others go to the company's site
-                        List<Map<String, Object>> easy = linkedin(title, location, true);
-                        pause();
-                        pause();   // LinkedIn answers "busy" to quick searches
-                        found.addAll(markApply(easy, linkedin(title, location, false)));
+                    List<Map<String, Object>> all = null;
+                    try {
+                        all = linkedin(title, location, false);
                     } catch (IOException e) {
                         failures++;
                         error = "LinkedIn: " + Util.shortError(e, 80);
                         linkedinBusy = String.valueOf(e.getMessage()).contains("429");   // busy: leave it alone until next round
                     }
                     pause();
-                    pause();
+                    pause();   // LinkedIn answers "busy" to quick searches
+                    if (all != null && !all.isEmpty() && !easyBusy) {
+                        try {   // which of them are Easy Apply: the others go to the company's site
+                            all = markApply(linkedin(title, location, true), all);
+                        } catch (IOException e) {
+                            easyBusy = true;   // the jobs stay, without the tag this round
+                        }
+                        pause();
+                        pause();
+                        pause();
+                    }
+                    if (all != null) {
+                        found.addAll(all);
+                    }
                 }
                 try {
                     found.addAll(wuzzuf(title));
