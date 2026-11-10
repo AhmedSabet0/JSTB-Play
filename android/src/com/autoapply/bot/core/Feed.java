@@ -227,6 +227,9 @@ public final class Feed {
      *  you to the company's site ("external"). Only said when the Easy Apply page covers its time (a full page that
      *  ends before it may just not reach it). */
     static List<Map<String, Object>> markApply(List<Map<String, Object>> easy, List<Map<String, Object>> all) {
+        if (easy.isEmpty()) {
+            return all;   // none, or LinkedIn gave an empty page: not known, no tag
+        }
         java.util.Set<String> ids = new java.util.HashSet<String>();
         double oldestEasy = 0;
         for (Map<String, Object> j : easy) {
