@@ -16,26 +16,84 @@
   function textOf(el) {
     return el ? clean(el.innerText || el.textContent || '') : '';
   }
+  // The fields in a box: a box with more than one belongs to several questions, so its label is not this field's.
+  var CONTROL = 'input:not([type="hidden"]), select, textarea, [role="combobox"], [aria-haspopup="listbox"]';
+  function controlsIn(box, el) {
+    var n = 0;
+    var list = box.querySelectorAll(CONTROL);
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (c === el || shadowInput(c)) continue;
+      if (el.name && c.name === el.name) continue;               // the same radio group
+      if (c.contains(el) || el.contains(c)) continue;          // the same drawn drop-down
+      var t = (c.getAttribute('type') || '').toLowerCase();
+      if ((t === 'radio' || t === 'checkbox') && !visible(c) && !shownByLabel(c)) continue;
+      if (!visible(c)) continue;
+      n++;
+    }
+    return n;
+  }
+  var NOT_QUESTION = /^(required|optional|invalid option|this field is required|select( an? (option|answer))?|choose( one)?|please select|\*|[-–—]+)$/i;
   function labelOf(el) {
     if (el.id) {
-      var byFor = document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]');
+      var byFor = null;
+      try { byFor = document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]'); } catch (e) { byFor = null; }
       if (textOf(byFor)) return textOf(byFor);
     }
     var aria = el.getAttribute('aria-label');
     if (clean(aria)) return clean(aria);
     var by = el.getAttribute('aria-labelledby');
     if (by) {
-      var t = by.split(/\s+/).map(function (id) { return textOf(document.getElementById(id)); }).join(' ');
-      if (clean(t)) return clean(t);
+      var t = by.split(/\s+/).map(function (id) { return id === el.id ? '' : textOf(document.getElementById(id)); }).join(' ');
+      if (clean(t) && !NOT_QUESTION.test(clean(t))) return clean(t);
     }
     var wrap = el.closest('label');
-    if (wrap && textOf(wrap)) return textOf(wrap);
+    if (wrap && textOf(wrap) && controlsIn(wrap, el) === 0) return textOf(wrap);
     var box = el.parentElement;
-    for (var i = 0; i < 4 && box; i++, box = box.parentElement) {
-      var lab = box.querySelector('label, legend, [class*="label"], [class*="Label"], [class*="question"]');
-      if (lab && !lab.contains(el) && textOf(lab)) return textOf(lab);
+    for (var i = 0; i < 5 && box && box !== document.body; i++, box = box.parentElement) {
+      if (controlsIn(box, el) > 0) break;   // the box holds other questions too: its label may be theirs
+      var lab = box.querySelector('label, legend, [class*="label"], [class*="Label"], [class*="question"], [class*="Question"], [class*="title"]');
+      if (lab && !lab.contains(el) && !el.contains(lab) && textOf(lab) && !NOT_QUESTION.test(textOf(lab))) return textOf(lab);
     }
-    return clean(el.getAttribute('placeholder') || el.getAttribute('name') || '');
+    return textBefore(el) || clean(el.getAttribute('placeholder') || el.getAttribute('name') || '');
+  }
+  // The text just above a field, as you see it on the page: the question of a form that does not label its fields.
+  // A question marked with "*" just above the field: you must answer it.
+  function starred(el) {
+    return /\*\s*$/.test(textBefore(el, true));
+  }
+  function textBefore(el, raw) {
+    var w;
+    try { w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null); } catch (e) { return ''; }
+    w.currentNode = el;
+    var n;
+    var steps = 0;
+    while ((n = w.previousNode()) && steps++ < 80) {
+      var t = clean(n.nodeValue);
+      if (t.length < 2) continue;
+      var p = n.parentElement;
+      if (!p || !visible(p) || el.contains(p)) continue;
+      if (p.closest('[role="listbox"], [role="option"], select, option, button, script, style, noscript, textarea')) continue;
+      if (p.closest('[role="combobox"], [aria-haspopup="listbox"]')) continue;   // another drop-down's answer
+      if (p.closest(ERR_SEL) || NOT_QUESTION.test(t)) continue;
+      var b = p;
+      for (var k = 0; k < 3 && b.parentElement && !b.parentElement.contains(el) && textOf(b.parentElement).length <= 400
+        && !b.parentElement.querySelector(CONTROL); k++) b = b.parentElement;
+      if (raw) return String(b.innerText || b.textContent || '').trim();
+      var full = textOf(b);
+      return (full.length > 400 ? t : full).slice(0, 400);
+    }
+    return '';
+  }
+  // An input a drawn drop-down keeps its value in (hidden from you): the drop-down is the field, not this.
+  function shadowInput(el) {
+    if (el.tagName !== 'INPUT' && el.tagName !== 'SELECT') return false;
+    var t = (el.getAttribute('type') || '').toLowerCase();
+    if (t === 'radio' || t === 'checkbox') return false;
+    if (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-haspopup')) return false;
+    if (el.getAttribute('aria-hidden') === 'true' || /nativeInput|native-input|visually-?hidden|sr-only|hidden-?input/i.test(String(el.className || ''))) return true;
+    var st = window.getComputedStyle(el);
+    return el.tabIndex === -1 && (parseFloat(st.opacity) === 0 || st.pointerEvents === 'none');
   }
   function groupLabel(el) {
     var fs = el.closest('fieldset');
@@ -73,8 +131,14 @@
       if (d && visible(d) && (el.getAttribute('aria-invalid') === 'true' || d.matches(ERR_SEL) || d.querySelector(ERR_SEL))) found = clean(textOf(d));
     });
     if (found) return found.slice(0, 200);
-    var box = el.closest('.fb-dash-form-element, .jobs-easy-apply-form-element, [data-test-form-element], fieldset, [class*="form-group" i], [class*="form-field" i], [class*="question" i]')
-      || (el.parentElement && el.parentElement.parentElement) || el.parentElement;
+    var box = el.closest('.fb-dash-form-element, .jobs-easy-apply-form-element, [data-test-form-element], fieldset, [class*="form-group" i], [class*="form-field" i], [class*="question" i]');
+    if (box && controlsIn(box, el) > 0) box = null;   // holds other questions too: their messages are not this field's
+    if (!box) {   // the largest box around this field that holds no other field
+      for (var b = el.parentElement, k = 0; k < 4 && b && b !== document.body; k++, b = b.parentElement) {
+        if (controlsIn(b, el) > 0) break;
+        box = b;
+      }
+    }
     if (!box) return '';
     var errs = box.querySelectorAll(ERR_SEL);
     for (var i = 0; i < errs.length; i++) {
@@ -304,7 +368,82 @@
     var hit = opts.filter(function (o) { return same(textOf(o), want); })[0]
       || opts.filter(function (o) { return textOf(o).toLowerCase().indexOf(String(want).toLowerCase()) >= 0; })[0];
     if (hit) { clickElement(hit); mark(el.closest('[class*="select" i], [class*="control" i]') || el); return; }
-    if (tries > 0) setTimeout(function () { pickOption(el, want, tries - 1); }, 250);
+    if (tries > 0) { setTimeout(function () { pickOption(el, want, tries - 1); }, 250); return; }
+    if (opts.length) {   // the list shows, and the answer is not in it: take the typed text out again (the site refuses it)
+      setValue(el, '');
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    }
+  }
+
+  // ---------------------------------------------------------------- drop-downs a site draws itself
+  // A <div role="combobox"> or a button that opens a list (Material UI, Radix, Headless UI...): you pick from its list.
+  function customSelects() {
+    var out = [];
+    var list = document.querySelectorAll('[role="combobox"]:not(input):not(textarea), [aria-haspopup="listbox"]:not(input):not(textarea)');
+    for (var i = 0; i < list.length; i++) {
+      var t = list[i];
+      if (!visible(t) || t.closest('[role="listbox"]') || t.getAttribute('aria-disabled') === 'true' || t.disabled) continue;
+      if (out.some(function (o) { return o.contains(t) || t.contains(o); })) continue;
+      if (t.querySelector('input:not([type="hidden"]):not([aria-hidden="true"]), textarea')) continue;   // a typing box: the input is the field
+      out.push(t);
+    }
+    return out;
+  }
+  function shownValue(t) {
+    var v = clean(String(textOf(t)).replace(/[\u200b\u00a0]/g, ' '));
+    return !v || /^(select|choose|please select|pick|--|—)/i.test(v) || v === clean(t.getAttribute('placeholder') || '') ? '' : v;
+  }
+  function listOf(t) {
+    var id = t.getAttribute('aria-controls') || t.getAttribute('aria-owns');
+    var box = id && document.getElementById(id);
+    if (box && visible(box)) return box;
+    var all = Array.prototype.filter.call(document.querySelectorAll('[role="listbox"]'), visible);
+    return all.length ? all[all.length - 1] : null;
+  }
+  function openList(t) {
+    var o = { bubbles: true, cancelable: true, view: window, button: 0 };
+    try { t.focus(); } catch (e) { /* not focusable */ }
+    try { t.dispatchEvent(new PointerEvent('pointerdown', o)); } catch (e) { /* old WebView */ }
+    t.dispatchEvent(new MouseEvent('mousedown', o));
+    if (!listOf(t)) { try { t.dispatchEvent(new PointerEvent('pointerup', o)); } catch (e) { /* old WebView */ } t.dispatchEvent(new MouseEvent('mouseup', o)); t.click(); }
+  }
+  function closeList(t) {
+    var box = listOf(t);
+    if (!box) return;
+    var esc = { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true };
+    box.dispatchEvent(new KeyboardEvent('keydown', esc));
+    if (listOf(t)) (document.activeElement || document.body).dispatchEvent(new KeyboardEvent('keydown', esc));
+    if (listOf(t)) document.dispatchEvent(new KeyboardEvent('keydown', esc));
+    var back = document.querySelector('.MuiBackdrop-root, .MuiBackdrop-invisible');
+    if (listOf(t) && back) back.click();
+  }
+  function optionsOf(t) {
+    if (t.__aaOpts && t.__aaOpts.length) return t.__aaOpts;
+    var opened = false;
+    var box = listOf(t);
+    if (!box) { openList(t); opened = true; box = listOf(t); }
+    var opts = box ? Array.prototype.map.call(box.querySelectorAll('[role="option"]'), textOf)
+      .filter(function (x) { return x && !/^(select|choose|please select|--)/i.test(x); }) : [];
+    var multi = !!(box && box.getAttribute('aria-multiselectable') === 'true');
+    if (opened) closeList(t);
+    t.__aaOpts = opts;
+    t.__aaMulti = multi;
+    return opts;
+  }
+  function pickCustom(t, wants, tries) {
+    if (!listOf(t)) openList(t);
+    var box = listOf(t);
+    var opts = box ? Array.prototype.filter.call(box.querySelectorAll('[role="option"]'), visible) : [];
+    if (!opts.length && tries > 0) { setTimeout(function () { pickCustom(t, wants, tries - 1); }, 250); return; }
+    var hit = 0;
+    wants.forEach(function (w) {
+      var o = opts.filter(function (x) { return same(textOf(x), w); })[0];
+      if (!o) return;
+      if (o.getAttribute('aria-selected') !== 'true') clickElement(o);
+      hit++;
+    });
+    if (listOf(t)) closeList(t);
+    if (hit) mark(t);
   }
 
   var fields = [];
@@ -319,6 +458,7 @@
       var type = (el.getAttribute('type') || el.tagName).toLowerCase();
       if (el.disabled || el.readOnly || SKIP.test(type)) continue;
       if (!visible(el) && !((type === 'radio' || type === 'checkbox') && shownByLabel(el))) continue;
+      if (shadowInput(el)) continue;   // the value behind a drawn drop-down
       if (isResumeRadio(el)) {
         continue;
       }
@@ -362,12 +502,22 @@
         value: el.tagName === 'SELECT' ? (el.selectedIndex > 0 ? clean(el.options[el.selectedIndex].text) : '') : String(el.value || ''),
         placeholder: clean(el.getAttribute('placeholder') || ''),
         maxlength: el.maxLength > 0 ? el.maxLength : 0,
-        required: isRequired(el, lbl),
+        required: isRequired(el, lbl) || (!rawLabel && starred(el)),
         error: errorOf(el),
       };
       fields.push({ f: f, els: [el] });
       out.push(f);
     }
+    customSelects().forEach(function (t) {
+      var lbl = labelOf(t);
+      var opts = optionsOf(t);
+      var multi = !!t.__aaMulti || /select all|all that apply|choose all|check all/i.test(lbl);
+      var cf = { key: 'f' + fields.length, label: lbl, kind: multi ? 'multi' : 'select', options: opts,
+        value: shownValue(t), placeholder: '', maxlength: 0,
+        required: isRequired(t, lbl) || t.getAttribute('aria-required') === 'true' || starred(t), error: errorOf(t), custom: true };
+      fields.push({ f: cf, els: [t] });
+      out.push(cf);
+    });
     Object.keys(groups).forEach(function (k) {
       var g = groups[k];
       var opts = g.els.map(optionLabel);
@@ -385,6 +535,16 @@
       };
       fields.push({ f: f, els: g.els });
       out.push(f);
+    });
+    // Two fields with the same question: one of them read a label that is not its own. Each takes the text above it.
+    var seen = {};
+    fields.forEach(function (it) { var k = clean(it.f.label).toLowerCase(); if (k) seen[k] = (seen[k] || 0) + 1; });
+    fields.forEach(function (it) {
+      var k = clean(it.f.label).toLowerCase();
+      if (!k || seen[k] > 1) {
+        var own = textBefore(it.els[0]);
+        if (own && own.toLowerCase() !== k) { it.f.label = own; it.f.required = it.f.required || /\*\s*$/.test(own); }
+      }
     });
     return JSON.stringify(out);
   }
@@ -421,6 +581,16 @@
       if (v === undefined || v === null) return;
       var f = item.f;
       var el = item.els[0];
+      if (f.custom) {
+        var ws = (Array.isArray(v) ? v : String(v).split(/\s*,\s*/)).map(String).filter(Boolean);
+        if (f.kind !== 'multi') ws = ws.slice(0, 1);
+        var known = f.options || [];
+        ws = ws.filter(function (w) { return !known.length || known.some(function (o) { return same(o, w); }); });
+        if (!ws.length) return;   // not one of its choices: left for you, never typed in
+        pickCustom(el, ws, 6);
+        n++;
+        return;
+      }
       if (f.combo) {
         var want0 = Array.isArray(v) ? v[0] : v;
         try { el.focus(); } catch (e) { /* not focusable */ }
@@ -526,6 +696,7 @@
   // Required fields that are still empty after filling: marked in orange, for you.
   function isEmpty(item) {
     var el = item.els[0];
+    if (item.f.custom) return !shownValue(el);
     if (item.f.kind === 'radio' || item.f.kind === 'multi') return !item.els.some(function (e) { return e.checked; });
     if (item.f.kind === 'checkbox') return !el.checked;
     if (item.f.kind === 'select') return el.selectedIndex <= 0 && !clean(el.value);

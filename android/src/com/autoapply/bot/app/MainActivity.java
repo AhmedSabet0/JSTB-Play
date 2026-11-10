@@ -1576,6 +1576,16 @@ public final class MainActivity extends Activity {
                                                                         if (Json.bool(v, "file")) {
                                                                             t.append(" Attach your CV with the site's file button.");
                                                                         }
+                                                                        final List<String> refused = Json.strings(v.get("errors"));
+                                                                        if (!refused.isEmpty()) {   // red messages on the page: not ready to send
+                                                                            showReview("The site does not accept " + refused.size()
+                                                                                    + (refused.size() == 1 ? " answer: " : " answers: ")
+                                                                                    + Util.cut(Util.join("; ", refused), 160)
+                                                                                    + ". Pick the right choice on the page, then tap Fill the form.", true, false);
+                                                                            web.evaluateJavascript("window.AAFill && window.AAFill.focusQuestion("
+                                                                                    + Json.stringify(refused.get(0).replaceFirst(":[^:]*$", "")) + ")", null);
+                                                                            return;
+                                                                        }
                                                                         if ("submit".equals(btnType)) {
                                                                             reviewSubmit.setText("Submit Application");
                                                                             reviewSubmit.setTextColor(Color.WHITE);
@@ -1726,10 +1736,23 @@ public final class MainActivity extends Activity {
         box.addView(hint);
         final android.widget.EditText input = new android.widget.EditText(this);
         final int[] picked = {-1};
+        final boolean multi = "multi".equals(kind) && !options.isEmpty();
+        final boolean[] ticked = new boolean[options.size()];
         AlertDialog.Builder b = new AlertDialog.Builder(this)
                 .setTitle(qs.size() > 1 ? "Question " + (i + 1) + " of " + qs.size() : "The form asks")
                 .setCancelable(false);
-        if (!options.isEmpty()) {
+        if (multi) {   // "select all that apply"
+            List<String> sugg = java.util.Arrays.asList(suggestion.toLowerCase(java.util.Locale.ROOT).split("\\s*,\\s*"));
+            for (int k = 0; k < options.size(); k++) {
+                ticked[k] = sugg.contains(options.get(k).toLowerCase(java.util.Locale.ROOT));
+            }
+            b.setMultiChoiceItems(options.toArray(new String[0]), ticked, new android.content.DialogInterface.OnMultiChoiceClickListener() {
+                @Override
+                public void onClick(android.content.DialogInterface d, int which, boolean on) {
+                    ticked[which] = on;
+                }
+            });
+        } else if (!options.isEmpty()) {
             for (int k = 0; k < options.size(); k++) {
                 if (options.get(k).equalsIgnoreCase(suggestion)) {
                     picked[0] = k;
@@ -1768,9 +1791,15 @@ public final class MainActivity extends Activity {
                 dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
                     @Override
                     public void onClick(View v) {
-                        final String answer = options.isEmpty() ? input.getText().toString().trim()
+                        List<String> all = new ArrayList<String>();
+                        for (int k = 0; multi && k < options.size(); k++) {
+                            if (ticked[k]) {
+                                all.add(options.get(k));
+                            }
+                        }
+                        final Object answer = multi ? (all.isEmpty() ? "" : all) : options.isEmpty() ? input.getText().toString().trim()
                                 : picked[0] >= 0 ? options.get(picked[0]) : "";
-                        if (answer.isEmpty()) {
+                        if ("".equals(answer)) {
                             Toast.makeText(MainActivity.this, options.isEmpty() ? "Type an answer, or tap Skip."
                                     : "Pick an answer, or tap Skip.", Toast.LENGTH_SHORT).show();
                             return;

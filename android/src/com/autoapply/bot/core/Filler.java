@@ -161,6 +161,20 @@ public final class Filler {
                     log("  The AI could not answer: " + Util.cut(label, 80) + " (" + Util.shortError(e, 80) + ")");
                 }
             }
+            if (value != null && !options.isEmpty() && !(value instanceof Boolean)) {
+                // A drop-down or choice: only one of its own choices ("2" -> "1-2 years"); anything else is asked.
+                Object fitted = Facts.fit(value, "multi".equals(kind) ? "multi" : "choice", options, null);
+                String n = number(Facts.answerText(value));
+                if (fitted == null && !n.isEmpty() && !"multi".equals(kind)) {
+                    String l = label.toLowerCase(java.util.Locale.ROOT);
+                    fitted = Profile.pickByNumber(options, Double.parseDouble(n),
+                            l.contains("year") || l.contains("experience") ? "years" : l.contains("notice") || l.contains("day") ? "days" : "");
+                }
+                if (fitted == null && suggestion == null) {
+                    suggestion = value;
+                }
+                value = fitted;
+            }
             if (value != null && numeric && !(value instanceof Boolean) && !(value instanceof List)) {
                 String n = number(Facts.answerText(value));
                 value = n.isEmpty() ? null : n;   // "how many / how much": a number only
