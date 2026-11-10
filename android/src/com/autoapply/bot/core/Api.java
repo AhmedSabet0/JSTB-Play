@@ -930,7 +930,7 @@ public final class Api {
         }
         if (what.equals("update")) {
             Map<String, Object> changes = Json.obj();
-            for (String k : new String[]{"state", "stage", "title", "company", "note"}) {
+            for (String k : new String[]{"state", "stage", "title", "company", "note", "apply"}) {
                 if (b.containsKey(k)) {
                     changes.put(k, b.get(k) instanceof String ? ((String) b.get(k)).trim() : b.get(k));
                 }

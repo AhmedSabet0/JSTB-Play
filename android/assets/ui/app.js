@@ -2257,9 +2257,14 @@
   ];
   const dayOf = (j) => { const n = daysAgo(postedOf(j)); return (DAYS.find((d) => d.has(n)) || DAYS[DAYS.length - 1]).k; };
   const fitOf = (j) => (typeof j.score === 'number' && j.score > 0 ? j.score / 10 : typeof j.fit === 'number' ? j.fit : 5);
-  // Newest day first; in a day, the best fits first, then the newest.
+  // How you apply: 'easy' (LinkedIn Easy Apply), 'quick' (on Wuzzuf), 'external' (the company's own form), '' (not known yet).
+  const applyOf = (j) => (['easy', 'quick', 'external'].includes(j.apply) ? j.apply
+    : j.channel === 'wuzzuf' || /wuzzuf\.net/.test(j.url || '') ? 'quick'
+      : j.channel === 'linkedin' || j.channel === 'auto' ? '' : 'external');
+  const easeOf = (j) => ({ easy: 0, quick: 0, '': 1, external: 2 })[applyOf(j)];
+  // Newest day first; in a day, the quick ones to apply first, then the best fits, then the newest.
   const nextJobs = () => waiting().slice().sort((a, b) => (daysAgo(postedOf(a)) - daysAgo(postedOf(b)))
-    || (fitOf(b) - fitOf(a)) || (postedOf(b) - postedOf(a)));
+    || (easeOf(a) - easeOf(b)) || (fitOf(b) - fitOf(a)) || (postedOf(b) - postedOf(a)));
   const findJob = (id) => queue.find((x) => x.id === id);
   function chanTag(j) {
     if (j.channel === 'linkedin') return '<span class="chan linkedin">LinkedIn</span>';
@@ -2276,7 +2281,14 @@
       const cls = j.fit >= 7 ? 'high' : j.fit >= 5 ? 'mid' : '';
       fitBadge = `<span class="fit ${cls}">${j.fit * 10}% Match</span>`;
     }
-    return chanTag(j) + fitBadge;
+    return chanTag(j) + easeTag(j) + fitBadge;
+  }
+  function easeTag(j) {
+    const a = applyOf(j);
+    if (a === 'easy') return '<span class="ease quick" title="You apply inside LinkedIn">⚡ Easy Apply</span>';
+    if (a === 'quick') return '<span class="ease quick" title="You apply inside Wuzzuf">⚡ Quick</span>';
+    if (a === 'external') return '<span class="ease ext" title="The company\'s own site and form">↗ External</span>';
+    return '';
   }
 
   let knownIds = null;   // jobs already seen: the pill is only for jobs that came in by themselves
@@ -2433,15 +2445,93 @@
     const shown = qFilter === 'skipped' ? skipped : list.filter((j) => dayOf(j) === qFilter);
     $('run-start').hidden = qFilter === 'skipped' || !shown.length;
     $('run-n').textContent = shown.length;
-    $('queue-list').innerHTML = shown.map((j) => `<li class="jcard"><button type="button" data-id="${esc(j.id)}"><span class="jc-title">${
+    const swipes = qFilter !== 'skipped';
+    $('queue-list').innerHTML = shown.map((j) => `<li class="jcard${swipes ? ' swipe' : ''}" data-id="${esc(j.id)}">${swipes
+      ? '<span class="sw-under" aria-hidden="true"><span class="sw-apply">Apply</span><span class="sw-skip">Skip</span></span>' : ''
+    }<button type="button" data-id="${esc(j.id)}"><span class="jc-title">${
       esc(j.title)}</span><span class="jc-co">${esc(j.company || hostOf(j.url))}${j.location ? ` · ${esc(j.location)}` : ''}</span><span class="tags">${
       tagsHtml(j)}<span class="when">${esc(ago(postedOf(j)))}</span></span></button></li>`).join('');
-    $('queue-list').querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', () => openSheet(b.dataset.id)));
+    $('queue-list').querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.swiped) { delete b.dataset.swiped; return; }   // the end of a swipe, not a tap
+      openSheet(b.dataset.id);
+    }));
+    if (swipes) $('queue-list').querySelectorAll('li.swipe').forEach(swipeable);
+    $('swipe-hint').hidden = !swipes || !shown.length || hintSeen();
     $('queue-empty').hidden = shown.length > 0;
     $('queue-empty-title').textContent = qFilter === 'skipped' ? 'Nothing skipped' : qFilter === 'd0' ? 'No new jobs yet today' : 'No jobs';
     $('queue-empty-text').textContent = qFilter === 'skipped' ? 'Jobs you skip wait here, in case you change your mind.'
       : 'New jobs for your job titles come in from LinkedIn and Wuzzuf every hour. Tap Refresh to look now.';
     renderFeedLine();
+  }
+
+  // ------------------------------------------------------------------ swipe a job: right applies, left skips
+  const hintSeen = () => { try { return localStorage.getItem('aa-swipe-hint') === '1'; } catch (e) { return true; } };
+  const hintDone = () => { try { localStorage.setItem('aa-swipe-hint', '1'); } catch (e) { /* only the hint */ } $('swipe-hint').hidden = true; };
+  $('swipe-hint-x').addEventListener('click', hintDone);
+  function swipeable(li) {
+    const card = li.querySelector('button');
+    let x0 = 0;
+    let y0 = 0;
+    let dx = 0;
+    let pid = null;
+    let dragging = false;
+    const reset = (animate) => {
+      card.style.transition = animate && !calm() ? 'transform .18s ease' : '';
+      card.style.transform = '';
+      li.classList.remove('to-apply', 'to-skip', 'far');
+    };
+    card.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      pid = e.pointerId; x0 = e.clientX; y0 = e.clientY; dx = 0; dragging = false;
+      card.style.transition = '';
+    });
+    card.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== pid) return;
+      const mx = e.clientX - x0;
+      const my = e.clientY - y0;
+      if (!dragging) {
+        if (Math.abs(my) > 12 && Math.abs(my) > Math.abs(mx)) { pid = null; return; }   // scrolling the list
+        if (Math.abs(mx) < 12) return;
+        dragging = true;
+        try { card.setPointerCapture(pid); } catch (err) { /* still works without it */ }
+      }
+      dx = mx;
+      card.style.transform = `translateX(${dx}px) rotate(${dx / 40}deg)`;
+      const far = Math.abs(dx) > li.offsetWidth * 0.3;
+      li.classList.toggle('to-apply', dx > 0);
+      li.classList.toggle('to-skip', dx < 0);
+      li.classList.toggle('far', far);
+    });
+    const end = (e) => {
+      if (e.pointerId !== pid) return;
+      pid = null;
+      if (!dragging) return;
+      dragging = false;
+      card.dataset.swiped = '1';   // the click that follows is not a tap
+      setTimeout(() => { delete card.dataset.swiped; }, 400);
+      if (Math.abs(dx) < li.offsetWidth * 0.3) { reset(true); return; }
+      const id = li.dataset.id;
+      const right = dx > 0;
+      card.style.transition = calm() ? '' : 'transform .2s ease-out';
+      card.style.transform = `translateX(${right ? '' : '-'}120%)`;
+      hintDone();
+      setTimeout(() => (right ? swipeApply(id, li, reset) : swipeSkip(id, li)), calm() ? 0 : 200);
+    };
+    card.addEventListener('pointerup', end);
+    card.addEventListener('pointercancel', (e) => { if (e.pointerId === pid) { pid = null; dragging = false; reset(true); } });
+  }
+  async function swipeSkip(id, li) {
+    const j = findJob(id) || {};
+    li.classList.add('gone');
+    await skipQuiet(id);
+    toast(`Skipped: ${j.title || 'the job'}`, false, { label: 'Undo', run: async () => {
+      try { const r = await api('/api/copilot/update', { id, state: 'new' }); queue = r.items || queue; rememberJobs(); paintQueue(); }
+      catch (e) { toast(e.message, true); }
+    } });
+  }
+  function swipeApply(id, li, reset) {
+    reset(false);   // the card comes back: it leaves the list when it is sent
+    startRun([id]);
   }
 
   // ------------------------------------------------------------------ apply in a row
@@ -2527,6 +2617,12 @@
     clearInterval(run.timer);
     run.on = false;
     run.current = null;
+    if (run.ids.length === 1) {   // one job (a swipe): no summary card
+      $('run').hidden = true;
+      if (run.sent) toast('Sent. Added to Applied.');
+      loadTracker(true);
+      return;
+    }
     runCard({ mark: '🎉', tone: 'ok', step: 'All done', title: `${plural(run.sent, 'application')} sent`,
       sub: run.skipped ? `${run.skipped} skipped. New jobs come in every hour.` : 'New jobs come in every hour.',
       buttons: [{ label: 'Applied list', run: () => { $('run').hidden = true; go('tracker'); } },

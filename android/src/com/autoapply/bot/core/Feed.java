@@ -103,15 +103,18 @@ public final class Feed {
             boolean linkedinBusy = false;
             for (String title : titles) {
                 if (!linkedinBusy) {
-                    try {
-                        found.addAll(linkedin(title, location));
+                    try {   // Easy Apply ones first, then all: the others go to the company's site
+                        List<Map<String, Object>> easy = linkedin(title, location, true);
+                        pause();
+                        pause();   // LinkedIn answers "busy" to quick searches
+                        found.addAll(markApply(easy, linkedin(title, location, false)));
                     } catch (IOException e) {
                         failures++;
                         error = "LinkedIn: " + Util.shortError(e, 80);
                         linkedinBusy = String.valueOf(e.getMessage()).contains("429");   // busy: leave it alone until next round
                     }
                     pause();
-                    pause();   // LinkedIn answers "busy" to quick searches
+                    pause();
                 }
                 try {
                     found.addAll(wuzzuf(title));
@@ -190,9 +193,49 @@ public final class Feed {
     static final Pattern LI_TIME = Pattern.compile("<time[^>]*datetime=\"(\\d{4}-\\d{2}-\\d{2})\"[^>]*>([\\s\\S]*?)</time>");
 
     static List<Map<String, Object>> linkedin(String title, String location) throws IOException {
+        return linkedin(title, location, false);
+    }
+
+    /** One page of LinkedIn's newest jobs for a title; `easyOnly`: only Easy Apply ones (they are marked "easy"). */
+    static List<Map<String, Object>> linkedin(String title, String location, boolean easyOnly) throws IOException {
         String url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=" + enc(title)
-                + "&location=" + enc(location) + "&f_TPR=r604800&sortBy=DD&start=0";
-        return parseLinkedIn(get(url, "text/html"), title, Util.now());
+                + "&location=" + enc(location) + "&f_TPR=r604800&sortBy=DD" + (easyOnly ? "&f_AL=true" : "") + "&start=0";
+        List<Map<String, Object>> out = parseLinkedIn(get(url, "text/html"), title, Util.now());
+        if (easyOnly) {
+            for (Map<String, Object> j : out) {
+                j.put("apply", "easy");
+            }
+        }
+        return out;
+    }
+
+    static final int LI_PAGE = 10;   // jobs LinkedIn gives in one page
+
+    /** The Easy Apply jobs, then the other jobs of the same search: one that is not among the Easy Apply ones takes
+     *  you to the company's site ("external"). Only said when the Easy Apply page covers its time (a full page that
+     *  ends before it may just not reach it). */
+    static List<Map<String, Object>> markApply(List<Map<String, Object>> easy, List<Map<String, Object>> all) {
+        java.util.Set<String> ids = new java.util.HashSet<String>();
+        double oldestEasy = 0;
+        for (Map<String, Object> j : easy) {
+            ids.add(Json.str(j, "id"));
+            double at = Json.dbl(j, "posted_at", 0);
+            oldestEasy = oldestEasy == 0 ? at : Math.min(oldestEasy, at);
+        }
+        if (easy.size() < LI_PAGE) {
+            oldestEasy = 0;   // every Easy Apply job of the week is there
+        }
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>(easy);
+        for (Map<String, Object> j : all) {
+            if (ids.contains(Json.str(j, "id"))) {
+                continue;
+            }
+            if (Json.dbl(j, "posted_at", 0) >= oldestEasy) {
+                j.put("apply", "external");
+            }
+            out.add(j);
+        }
+        return out;
     }
 
     static List<Map<String, Object>> parseLinkedIn(String html, String query, double now) {
@@ -276,7 +319,9 @@ public final class Feed {
             String country = nameOf(loc.get("country"));
             String where = (city + (city.isEmpty() || country.isEmpty() ? "" : ", ") + country).trim();
             double posted = wuzzufDate(Json.str(a, "postedAt").isEmpty() ? Json.str(a, "publishedAt") : Json.str(a, "postedAt"), now);
-            out.add(job(id, url, jobTitle, company, where, "wuzzuf", posted, query));
+            Map<String, Object> j = job(id, url, jobTitle, company, where, "wuzzuf", posted, query);
+            j.put("apply", "quick");   // you apply on Wuzzuf itself
+            out.add(j);
         }
         return out;
     }

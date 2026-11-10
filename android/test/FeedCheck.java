@@ -16,8 +16,14 @@ public class FeedCheck {
         for (String t : titles) {
             Thread.sleep(3000);   // as the phone does: LinkedIn answers "busy" to quick searches
             try {
-                List<Map<String, Object>> li = Feed.linkedin(t, "Egypt");
-                notice("LinkedIn '" + t + "': " + li.size() + " jobs" + sample(li));
+                List<Map<String, Object>> easy = Feed.linkedin(t, "Egypt", true);
+                Thread.sleep(3000);
+                List<Map<String, Object>> li = Feed.markApply(easy, Feed.linkedin(t, "Egypt", false));
+                int ext = 0;
+                for (Map<String, Object> j : li) {
+                    ext += "external".equals(Json.str(j, "apply")) ? 1 : 0;
+                }
+                notice("LinkedIn '" + t + "': " + li.size() + " jobs, " + easy.size() + " Easy Apply, " + ext + " external" + sample(easy));
                 if (li.isEmpty()) {
                     bad++;
                 }

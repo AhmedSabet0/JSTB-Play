@@ -77,6 +77,9 @@ public final class Copilot {
                 if (!have.containsKey("posted_at") && j.containsKey("posted_at")) {
                     have.put("posted_at", j.get("posted_at"));
                 }
+                if (Json.str(have, "apply").isEmpty() && !Json.str(j, "apply").isEmpty()) {
+                    have.put("apply", j.get("apply"));   // how you apply: learnt on a later round
+                }
                 continue;
             }
             if (ids.contains(id) || urls.contains(Json.str(j, "url")) || Json.dbl(j, "posted_at", now) < oldest) {
@@ -243,6 +246,10 @@ public final class Copilot {
                 if (changes.containsKey(k)) {
                     it.put(k, changes.get(k));
                 }
+            }
+            String how = Json.str(changes, "apply");
+            if (how.equals("easy") || how.equals("quick") || how.equals("external")) {
+                it.put("apply", how);   // seen on the job's page: Easy Apply, or the company's site
             }
             if (changes.containsKey("state")) {
                 String st = Json.str(changes, "state");

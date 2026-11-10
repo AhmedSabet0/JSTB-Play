@@ -1298,6 +1298,7 @@ public final class MainActivity extends Activity {
                                 String label = jsText(clicked);
                                 showReview(label.isEmpty() ? "Waiting for the form…" : "Opened the site's \"" + label + "\". Filling…",
                                         false, false);
+                                noteApplyKind(browserJob, label);
                                 platform.main.postDelayed(new Runnable() {
                                     @Override
                                     public void run() {
@@ -1310,6 +1311,25 @@ public final class MainActivity extends Activity {
                 });
             }
         }, 900);
+    }
+
+    /** The LinkedIn button the app tapped tells how this job is applied to: "Easy Apply" in LinkedIn, or "Apply" on
+     *  the company's site. Kept on the job, so its tag in the list is right. */
+    private void noteApplyKind(final String job, String label) {
+        if (job == null || !job.startsWith("li:") || label == null || label.trim().isEmpty()) {
+            return;
+        }
+        final String kind = label.toLowerCase(java.util.Locale.ROOT).contains("easy apply") ? "easy" : "external";
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    platform.api.handle("/api/copilot/update", Json.stringify(Json.obj("id", job, "apply", kind)));
+                } catch (RuntimeException ignored) {
+                    // only a tag
+                }
+            }
+        }, "apply-kind").start();
     }
 
     /** After a fill: the site's thank-you page means it was sent; the job is marked Applied. */
